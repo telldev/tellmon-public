@@ -1,0 +1,7 @@
+---
+- name: Release new image on remote hosts
+  hosts: all
+  become: true
+  tasks:
+    - name: Import release tasks
+      ansible.builtin.import_tasks: release-tasks.yml

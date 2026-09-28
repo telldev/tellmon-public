@@ -1,0 +1,9 @@
+---
+- name: Update Tellmon images on remote hosts
+  hosts: all
+  become: true
+  vars:
+    tellmon_helper_bin_src: "{{ playbook_dir }}/../../../tellmon-update/bin"
+  tasks:
+    - name: Import update Tellmon tasks
+      ansible.builtin.import_tasks: update-tellmon-tasks.yml

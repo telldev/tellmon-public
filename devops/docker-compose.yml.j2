@@ -1,0 +1,135 @@
+services:
+  caddy:
+    image: tellsoftware/tellmon-caddy:latest
+    restart: unless-stopped
+    volumes:
+      - ./config/caddy:/etc/caddy
+      - ./config/certificate:/etc/caddy/certs:ro
+      - caddy_data:/data/caddy
+      - caddy_config:/config
+    ports:
+      - 80:80
+      - 443:443
+      - 8443:8443
+    depends_on:
+      backend:
+        condition: service_healthy
+    logging:
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  postgres:
+    container_name: tellmon_db
+    restart: unless-stopped
+    image: postgres:16.1-alpine
+    logging:
+      options:
+        max-size: "50m"
+        max-file: "5"
+    ports:
+      - 127.0.0.1:5432:5432
+    volumes:
+      - tellmon_db_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: {{ postgres_password | default('secret') | to_json }}
+      POSTGRES_DB: "tellmon"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U root -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  receiver:
+    container_name: tellmon_receiver
+    restart: unless-stopped
+    image: tellsoftware/tellmon-receiver:latest
+    logging:
+      options:
+        max-size: "50m"
+        max-file: "5"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      PHYSICAL_MODE: "{{ 'true' if is_physical_mode else 'false' }}"
+{% if is_physical_mode %}
+    device_cgroup_rules:
+      - 'c 108:0 rwm'
+      - 'c 166:* rwm'
+      - 'c 188:* rwm'
+    devices:
+      - /dev/ppp:/dev/ppp:rwm
+{% for serial_device in serial_devices | default([]) %}
+      - {{ serial_device }}:{{ serial_device }}:rwm
+{% endfor %}
+    cap_add:
+      - NET_ADMIN
+{% endif %}
+    group_add:
+      - dialout
+    volumes:
+{% if is_physical_mode %}
+      - /dev:/dev
+{% endif %}
+      - ./config:/home/tellmon/TELLMon/config
+      - ./bin:/home/tellmon/TELLMon/bin
+      - ./device_updates:/home/tellmon/TELLMon/device_updates
+      - ./reboot.sock:/var/run/reboot.sock
+      - /sys:/host/sys:ro
+    ports:
+      - 3535:3535
+      - 3333:3333
+      - 3545:3545
+      - 3000:3000
+      - 3001:3001
+      - 3569:3569
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f tellreceiver || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  backend:
+    container_name: tellmon_backend
+    restart: unless-stopped
+    image: tellsoftware/tellmon-backend:latest
+    logging:
+      options:
+        max-size: "50m"
+        max-file: "5"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      receiver:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_PASSWORD: {{ postgres_password | default('secret') | to_json }}
+      PHYSICAL_MODE: "{{ 'true' if is_physical_mode else 'false' }}"
+{% if serial_devices | default([]) | length > 0 %}
+    devices:
+{% for serial_device in serial_devices | default([]) %}
+      - {{ serial_device }}:{{ serial_device }}:rwm
+{% endfor %}
+{% endif %}
+    group_add:
+      - dialout
+    volumes:
+      - ./config:/home/tellmon/TELLMon/config
+      - ./device_updates:/home/tellmon/TELLMon/device_updates
+      - ./reboot.sock:/var/run/reboot.sock
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 8889 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  tellmon_db_data:
+  caddy_data:
+  caddy_config:

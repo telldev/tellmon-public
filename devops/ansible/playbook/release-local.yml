@@ -1,0 +1,11 @@
+---
+- name: Release new image on localhost
+  hosts: localhost
+  connection: local
+  become: true
+  vars:
+    tellmon_mode: >-
+      {{ 'physical' if (lookup('ansible.builtin.env', 'TELLMON_INSTALL_PHYSICAL') | bool) else 'terminal' }}
+  tasks:
+    - name: Import release tasks
+      ansible.builtin.import_tasks: release-tasks.yml

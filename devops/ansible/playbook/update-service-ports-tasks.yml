@@ -1,0 +1,235 @@
+---
+- name: Resolve configuration facts
+  ansible.builtin.set_fact:
+    resolved_ports_file: "{{ ports_file | default(portsfile | default(ports_path | default(PORTS_FILE | default('')))) }}"
+    resolved_compose_dir: "{{ compose_dir | default('/docker/tellmon') }}"
+    resolved_compose_file: "{{ compose_file | default((compose_dir | default('/docker/tellmon')) ~ '/docker-compose.yml') }}"
+    resolved_sshd_config: "{{ sshd_config_file | default('/etc/ssh/sshd_config') }}"
+
+- name: Validate ports file parameter is provided
+  ansible.builtin.assert:
+    that:
+      - resolved_ports_file is defined
+      - (resolved_ports_file | string | length) > 0
+    fail_msg: "Please provide the ports file path using -e 'ports_file=/path/to/ports_file'"
+
+- name: Check if ports file exists
+  ansible.builtin.stat:
+    path: "{{ resolved_ports_file }}"
+  register: ports_file_stat
+
+- name: Assert ports file exists
+  ansible.builtin.assert:
+    that:
+      - ports_file_stat.stat.exists
+      - not ports_file_stat.stat.isdir
+    fail_msg: "The specified ports file '{{ resolved_ports_file }}' does not exist or is a directory"
+
+- name: Check if docker-compose.yml exists
+  ansible.builtin.stat:
+    path: "{{ resolved_compose_file }}"
+  register: compose_file_stat
+
+- name: Assert docker-compose.yml exists
+  ansible.builtin.assert:
+    that:
+      - compose_file_stat.stat.exists
+      - not compose_file_stat.stat.isdir
+    fail_msg: "The compose file '{{ resolved_compose_file }}' does not exist or is a directory"
+
+- name: Read ports file
+  ansible.builtin.slurp:
+    src: "{{ resolved_ports_file }}"
+  register: raw_ports_file
+
+- name: Parse ports file into dictionary
+  ansible.builtin.set_fact:
+    parsed_ports: "{{ ((raw_ports_file.content | b64decode) | regex_replace('(?m)^([a-zA-Z0-9_]+)[ \\t]+', '\\1: ')) | from_yaml }}"
+
+- name: Validate SSH port
+  ansible.builtin.assert:
+    that:
+      - parsed_ports.ssh_port is defined
+      - (parsed_ports.ssh_port | string) is match('^[0-9]{1,5}$')
+      - parsed_ports.ssh_port | int >= 1
+      - parsed_ports.ssh_port | int <= 65535
+    fail_msg: "ssh_port must be an integer between 1 and 65535"
+
+- name: Update Caddy web port in docker-compose.yml
+  ansible.builtin.replace:
+    path: "{{ resolved_compose_file }}"
+    regexp: '-\s*[0-9]+:8443\b'
+    replace: "- {{ parsed_ports.web_port | default('8443') }}:8443"
+  when:
+    - (parsed_ports.web_port | default('8443') | string | length) > 0
+  register: caddy_replace
+
+- name: Update Receiver external ports in docker-compose.yml
+  ansible.builtin.replace:
+    path: "{{ resolved_compose_file }}"
+    regexp: '-\s*[0-9]+:{{ item.internal }}\b'
+    replace: "- {{ item.external }}:{{ item.internal }}"
+  loop:
+    - { internal: '3535', external: "{{ parsed_ports.tellmon_tcp_port | default('3535') }}" }
+    - { internal: '3333', external: "{{ parsed_ports.tex_port | default('3333') }}" }
+    - { internal: '3545', external: "{{ parsed_ports.tellmon_udp_port | default('3545') }}" }
+    - { internal: '3000', external: "{{ parsed_ports.sia_tcp_port | default('3000') }}" }
+    - { internal: '3001', external: "{{ parsed_ports.sia_udp_port | default('3001') }}" }
+  when: (item.external | string | length) > 0
+  register: receiver_replaces
+
+- name: Determine changed services
+  ansible.builtin.set_fact:
+    changed_services: >-
+      {{
+        (['caddy'] if (caddy_replace.changed | default(false)) else []) +
+        (['receiver'] if (receiver_replaces.results | default([]) | selectattr('changed', 'defined') | selectattr('changed') | list | length > 0) else [])
+      }}
+
+- name: Display changed services
+  ansible.builtin.debug:
+    msg: "Services requiring restart/recreation: {{ changed_services }}"
+  when: changed_services | length > 0
+
+- name: Recreate changed docker compose services
+  when: changed_services | length > 0
+  block:
+    - name: Recreate changed services via docker_compose_v2
+      community.docker.docker_compose_v2:
+        project_src: "{{ resolved_compose_dir }}"
+        files:
+          - "{{ resolved_compose_file | basename }}"
+        services: "{{ changed_services }}"
+        state: present
+  rescue:
+    - name: "Fallback - Recreate changed services via docker compose CLI"
+      ansible.builtin.command:
+        cmd: "docker compose -f {{ resolved_compose_file }} up -d --no-deps {{ item }}"
+        chdir: "{{ resolved_compose_dir }}"
+      loop: "{{ changed_services }}"
+
+- name: Wait for receiver to be healthy if receiver was recreated
+  community.docker.docker_container_info:
+    name: tellmon_receiver
+  until: "container_info.container.State.Health.Status == 'healthy'"
+  register: container_info
+  retries: 20
+  delay: 10
+  when: "'receiver' in changed_services"
+  ignore_errors: true
+
+- name: Check if SSH config file exists
+  ansible.builtin.stat:
+    path: "{{ resolved_sshd_config }}"
+  register: sshd_config_stat
+
+- name: Assert SSH config file exists
+  ansible.builtin.assert:
+    that:
+      - sshd_config_stat.stat.exists
+      - not sshd_config_stat.stat.isdir
+    fail_msg: "The SSH config file '{{ resolved_sshd_config }}' does not exist or is a directory"
+
+- name: Check if ufw is installed and active
+  ansible.builtin.command: ufw status
+  register: ufw_status_cmd
+  changed_when: false
+  failed_when: false
+
+# Open the new port before moving SSH to it so an active firewall cannot lock
+# administrators out between the service restart and the firewall update.
+- name: Allow new SSH port in ufw before restarting SSH
+  ansible.builtin.command: "ufw allow {{ parsed_ports.ssh_port }}/tcp"
+  when:
+    - ufw_status_cmd.rc == 0
+    - "'Status: active' in ufw_status_cmd.stdout"
+  register: ufw_ssh_allow
+  changed_when: "'Rule added' in ufw_ssh_allow.stdout"
+
+- name: Update SSH port in sshd_config
+  ansible.builtin.lineinfile:
+    path: "{{ resolved_sshd_config }}"
+    regexp: '^[#\s]*Port\s+[0-9]+'
+    line: "Port {{ parsed_ports.ssh_port }}"
+    state: present
+    validate: '/usr/sbin/sshd -t -f %s'
+  register: sshd_update_result
+  when:
+    - sshd_config_stat.stat.exists
+    - parsed_ports.ssh_port is defined
+
+- name: Check whether SSH uses systemd socket activation
+  ansible.builtin.command: systemctl is-active --quiet ssh.socket
+  register: ssh_socket_active
+  changed_when: false
+  failed_when: false
+  when: sshd_update_result.changed | default(false)
+
+- name: Reload systemd and restart the SSH socket
+  ansible.builtin.systemd:
+    name: ssh.socket
+    daemon_reload: true
+    state: restarted
+  when:
+    - sshd_update_result.changed | default(false)
+    - (ssh_socket_active.rc | default(1)) == 0
+
+- name: Restart the SSH daemon when socket activation is not active
+  ansible.builtin.service:
+    name: "{{ 'ssh' if ansible_facts.os_family == 'Debian' else 'sshd' }}"
+    state: restarted
+  when:
+    - sshd_update_result.changed | default(false)
+    - (ssh_socket_active.rc | default(1)) != 0
+
+- name: Verify SSH is listening on the configured port
+  ansible.builtin.command:
+    argv:
+      - ss
+      - -H
+      - -ltn
+      - sport
+      - "="
+      - ":{{ parsed_ports.ssh_port }}"
+  register: ssh_port_listener
+  changed_when: false
+  failed_when: ssh_port_listener.stdout | trim | length == 0
+  retries: 5
+  delay: 1
+  until: ssh_port_listener.stdout | trim | length > 0
+  when: sshd_update_result.changed | default(false)
+
+- name: Update UFW rules if firewall is active
+  when:
+    - ufw_status_cmd.rc == 0
+    - "'Status: active' in ufw_status_cmd.stdout"
+  block:
+    - name: Allow web port in ufw
+      ansible.builtin.command: "ufw allow {{ parsed_ports.web_port }}/tcp"
+      when: parsed_ports.web_port is defined
+      changed_when: false
+
+    - name: Allow tellmon tcp port in ufw
+      ansible.builtin.command: "ufw allow {{ parsed_ports.tellmon_tcp_port }}/tcp"
+      when: parsed_ports.tellmon_tcp_port is defined
+      changed_when: false
+
+    - name: Allow tellmon udp port in ufw
+      ansible.builtin.command: "ufw allow {{ parsed_ports.tellmon_udp_port }}/udp"
+      when: parsed_ports.tellmon_udp_port is defined
+      changed_when: false
+
+    - name: Allow tex port in ufw
+      ansible.builtin.command: "ufw allow {{ parsed_ports.tex_port }}/tcp"
+      when: parsed_ports.tex_port is defined
+      changed_when: false
+
+    - name: Allow sia tcp port in ufw
+      ansible.builtin.command: "ufw allow {{ parsed_ports.sia_tcp_port }}/tcp"
+      when: parsed_ports.sia_tcp_port is defined
+      changed_when: false
+
+    - name: Allow sia udp port in ufw
+      ansible.builtin.command: "ufw allow {{ parsed_ports.sia_udp_port }}/udp"
+      when: parsed_ports.sia_udp_port is defined
+      changed_when: false

@@ -1,0 +1,8 @@
+---
+- name: Update service ports on localhost
+  hosts: localhost
+  connection: local
+  become: true
+  tasks:
+    - name: Import update service ports tasks
+      ansible.builtin.import_tasks: update-service-ports-tasks.yml

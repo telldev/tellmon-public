@@ -1,0 +1,328 @@
+---
+- name: Store Tellmon mode facts
+  ansible.builtin.set_fact:
+    resolved_tellmon_mode: "{{ tellmon_mode | default('terminal') }}"
+    is_physical_mode: "{{ (tellmon_mode | default('terminal')) == 'physical' }}"
+
+- name: Validate Tellmon mode
+  ansible.builtin.assert:
+    that:
+      - resolved_tellmon_mode in ['terminal', 'physical']
+    fail_msg: "tellmon_mode must be either 'terminal' or 'physical'"
+
+- name: Check if Docker Compose is installed
+  ansible.builtin.command: docker compose version
+  register: docker_check
+  ignore_errors: true
+  changed_when: false
+
+- name: Remove invalid universe component from Debian sources
+  ansible.builtin.replace:
+    path: /etc/apt/sources.list
+    regexp: '(\s+)universe\b'
+    replace: ""
+  when: ansible_distribution == 'Debian' or (ansible_os_family == 'Debian' and ansible_distribution != 'Ubuntu')
+  ignore_errors: true
+
+- name: Ensure software-properties-common is installed on Ubuntu
+  ansible.builtin.apt:
+    name: software-properties-common
+    state: present
+  when: ansible_distribution == 'Ubuntu'
+  ignore_errors: true
+
+- name: Ensure universe repository is enabled on Ubuntu
+  ansible.builtin.command: add-apt-repository -y universe
+  when: ansible_distribution == 'Ubuntu'
+  register: universe_res
+  changed_when: "'Repository already enabled' not in universe_res.stdout and 'already enabled' not in universe_res.stderr"
+  failed_when: false
+
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: yes
+    cache_valid_time: 3600
+  ignore_errors: true
+
+- name: Ensure prerequisite tools are installed
+  ansible.builtin.apt:
+    name:
+      - curl
+      - ca-certificates
+    state: present
+
+- name: Install Docker and Docker Compose plugin via official installer if missing
+  ansible.builtin.shell: curl -fsSL https://get.docker.com | sh
+  when: docker_check.rc != 0
+
+- name: Ensure Docker service is running and enabled
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+
+- name: Ensure required dependencies and Python Docker SDK are installed
+  ansible.builtin.apt:
+    name:
+      - python3
+      - python3-docker
+      - usbutils
+      - socat
+      - wvdial
+    state: present
+
+- name: Creates project directory if needed
+  ansible.builtin.file:
+    path: "/docker/tellmon"
+    state: directory
+
+- name: Creates db-init directory if needed
+  ansible.builtin.file:
+    path: "/docker/tellmon/db-init"
+    state: directory
+
+- name: Ensure Tellmon config directory exists on host
+  ansible.builtin.file:
+    path: "/docker/tellmon/config"
+    state: directory
+    owner: "10001"
+    group: "10001"
+    mode: "0755"
+
+- name: Ensure Tellmon config is writable by containers
+  ansible.builtin.file:
+    path: "/docker/tellmon/config"
+    state: directory
+    recurse: true
+    owner: "10001"
+    group: "10001"
+    mode: u=rwX,g=rX,o=rX
+
+- name: Ensure Caddy config directory exists on host
+  ansible.builtin.file:
+    path: "/docker/tellmon/config/caddy"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install default Caddyfile if absent
+  ansible.builtin.copy:
+    # Keep this default in sync with devops/caddy/Caddyfile. Local installs may
+    # have only the Ansible playbooks under /home/ubuntu/ansible/playbook.
+    content: |
+      {
+        https_port 8443
+      }
+
+      :8443 {
+        tls internal {
+          on_demand
+        }
+
+        # Route backend-srv (/backend/*)
+        handle_path /backend/* {
+          reverse_proxy backend:8889
+        }
+
+        # Route tms (/tellmonadmin/*)
+        handle /tellmonadmin* {
+          reverse_proxy backend:8889
+        }
+
+        # Route frontend static files
+        handle {
+          root * /data
+          try_files {path} {path}/ /index.html
+          file_server
+        }
+      }
+
+      :80 {
+        respond "Bad Request" 400
+      }
+    dest: "/docker/tellmon/config/caddy/Caddyfile"
+    owner: root
+    group: root
+    mode: "0644"
+    force: false
+
+- name: Write Tellmon runtime mode
+  ansible.builtin.copy:
+    dest: "/docker/tellmon/config/mode"
+    content: "PHYSICAL_MODE={{ 'true' if is_physical_mode else 'false' }}\n"
+    owner: "10001"
+    group: "10001"
+    mode: "0644"
+
+- name: Ensure Tellmon bin directory exists on host
+  ansible.builtin.file:
+    path: "/docker/tellmon/bin"
+    state: directory
+    owner: "10001"
+    group: "10001"
+    mode: "0755"
+
+- name: Ensure Tellmon bin is writable by containers
+  ansible.builtin.file:
+    path: "/docker/tellmon/bin"
+    state: directory
+    recurse: true
+    owner: "10001"
+    group: "10001"
+    mode: u=rwX,g=rX,o=rX
+
+- name: Ensure Tellmon device_updates directory exists on host
+  ansible.builtin.file:
+    path: "/docker/tellmon/device_updates"
+    state: directory
+    owner: "10001"
+    group: "10001"
+    mode: "0755"
+
+- name: Ensure Tellmon device_updates is writable by containers
+  ansible.builtin.file:
+    path: "/docker/tellmon/device_updates"
+    state: directory
+    recurse: true
+    owner: "10001"
+    group: "10001"
+    mode: u=rwX,g=rX,o=rX
+
+- name: Copy Tellmon Host Reboot Listener Python script
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../tellmon-reboot-listener.py"
+    dest: "/usr/local/bin/tellmon-reboot-listener.py"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install Tellmon Host Reboot Listener systemd service
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../tellmon-reboot-listener.service"
+    dest: "/etc/systemd/system/tellmon-reboot-listener.service"
+
+- name: Enable and restart Tellmon Host Reboot Listener service
+  ansible.builtin.systemd:
+    name: tellmon-reboot-listener
+    state: restarted
+    enabled: true
+    daemon_reload: true
+
+- name: Wait for reboot listener socket to be ready
+  ansible.builtin.wait_for:
+    path: /docker/tellmon/reboot.sock
+    state: present
+    timeout: 15
+
+- name: Detect serial devices for Docker
+  ansible.builtin.shell: >
+    find /dev -maxdepth 1 -type c \( -name 'ttyS[0-9]*' -o -name 'ttyUSB[0-9]*' -o -name 'ttyACM[0-9]*' \) -print | sort -V
+  register: detected_serial_devices
+  changed_when: false
+  when: is_physical_mode
+
+- name: Create UC20 AT modem alias
+  ansible.builtin.file:
+    src: /dev/ttyUSB2
+    dest: /dev/ttyUSB-UC20-AT
+    state: link
+    force: true
+  when: is_physical_mode
+
+- name: Create UC20 PPP modem alias
+  ansible.builtin.file:
+    src: /dev/ttyUSB3
+    dest: /dev/ttyUSB-UC20-Modem
+    state: link
+    force: true
+  when: is_physical_mode
+
+- name: Set UC20 modem device ownership
+  ansible.builtin.file:
+    path: "{{ item }}"
+    owner: root
+    group: dialout
+  loop:
+    - /dev/ttyUSB2
+    - /dev/ttyUSB3
+  when: is_physical_mode
+
+- name: Detect modem alias devices for Docker
+  ansible.builtin.shell: >
+    find /dev -maxdepth 1 \( -type c -o -type l \) \( -name 'ttyUSB-UC20-*' -o -name 'ttyUSB-UC25-*' -o -name 'gsm' \) -print | sort -V
+  register: detected_modem_alias_devices
+  changed_when: false
+  when: is_physical_mode
+
+- name: Detect USB PPP modem
+  ansible.builtin.shell: >
+    lsusb | grep -Eiq '05c6:9003|2c7c:0125'
+  register: detected_usb_ppp_modem
+  changed_when: false
+  failed_when: false
+  when: is_physical_mode
+
+- name: Store detected device facts
+  ansible.builtin.set_fact:
+    serial_devices: "{{ ((detected_serial_devices.stdout_lines | default([])) + (detected_modem_alias_devices.stdout_lines | default([]))) | unique | list if is_physical_mode else [] }}"
+    has_ppp_modem: "{{ is_physical_mode }}"
+
+- name: Load PPP kernel module
+  ansible.builtin.command: modprobe ppp_generic
+  changed_when: false
+  when: is_physical_mode
+
+- name: Ensure /dev/ppp exists
+  ansible.builtin.command: mknod /dev/ppp c 108 0
+  args:
+    creates: /dev/ppp
+  when: is_physical_mode
+
+- name: Set /dev/ppp permissions
+  ansible.builtin.file:
+    path: /dev/ppp
+    mode: "0666"
+  when: is_physical_mode
+
+- name: Render docker-compose file
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/../../docker-compose.yml.j2"
+    dest: "/docker/tellmon/docker-compose.yml"
+
+- name: Stop docker compose
+  community.docker.docker_compose_v2:
+    project_src: /docker/tellmon
+    files:
+      - docker-compose.yml
+    state: stopped
+  ignore_errors: true
+
+- name: Pull docker image and up
+  community.docker.docker_compose_v2:
+    project_src: /docker/tellmon
+    files:
+      - docker-compose.yml
+    state: present
+    pull: always
+
+- name: Wait for receiver to be healthy
+  community.docker.docker_container_info:
+    name: tellmon_receiver
+  until: "container_info.container.State.Health.Status == 'healthy'"
+  register: container_info
+  retries: 20
+  delay: 10
+
+- name: Wait for backend to be healthy
+  community.docker.docker_container_info:
+    name: tellmon_backend
+  until: "container_info.container.State.Health.Status == 'healthy'"
+  register: container_info
+  retries: 20
+  delay: 10
+
+- name: Remove unused docker images and builder cache
+  community.docker.docker_prune:
+    images: true
+    builder_cache: true

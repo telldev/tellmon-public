@@ -1,0 +1,123 @@
+---
+- name: Check if Tellmon docker-compose file exists
+  ansible.builtin.stat:
+    path: /docker/tellmon/docker-compose.yml
+  register: compose_file_stat
+
+- name: Ensure Tellmon is already installed
+  ansible.builtin.assert:
+    that:
+      - compose_file_stat.stat.exists
+      - not compose_file_stat.stat.isdir
+    fail_msg: "Tellmon docker-compose.yml was not found at /docker/tellmon/docker-compose.yml. Please run the Install Tellmon action first."
+
+- name: Ensure root-owned Tellmon helper directory exists
+  ansible.builtin.file:
+    path: "/usr/local/lib/tellmon/bin"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Update root-owned Tellmon helper scripts
+  ansible.builtin.copy:
+    src: "{{ tellmon_helper_bin_src }}/"
+    dest: "/usr/local/lib/tellmon/bin/"
+    owner: root
+    group: root
+    mode: "0755"
+  ignore_errors: true
+
+- name: Update root-owned container command wrapper as host command
+  ansible.builtin.copy:
+    src: "{{ tellmon_helper_bin_src }}/command.sh"
+    dest: "/usr/local/lib/tellmon/bin/command-host.sh"
+    owner: root
+    group: root
+    mode: "0755"
+  ignore_errors: true
+
+- name: Stop docker compose
+  community.docker.docker_compose_v2:
+    project_src: /docker/tellmon
+    files:
+      - docker-compose.yml
+    state: stopped
+  ignore_errors: true
+
+- name: Update jwt.secret in shared application.properties
+  ansible.builtin.lineinfile:
+    path: "/docker/tellmon/config/application.properties"
+    regexp: '^jwt\.secret\s*='
+    line: "jwt.secret={{ jwt_secret }}"
+  when: jwt_secret is defined and (jwt_secret | length > 0)
+  no_log: true
+
+- name: Update datakeep.api.code in shared application.properties
+  ansible.builtin.lineinfile:
+    path: "/docker/tellmon/config/application.properties"
+    regexp: '^datakeep\.api\.code\s*='
+    line: "datakeep.api.code={{ datakeep_api_code }}"
+  when: datakeep_api_code is defined and (datakeep_api_code | length > 0)
+  no_log: true
+
+- name: Update webapi.apikey in shared application.properties
+  ansible.builtin.lineinfile:
+    path: "/docker/tellmon/config/application.properties"
+    regexp: '^webapi\.apikey\s*='
+    line: "webapi.apikey={{ webapi_api_key }}"
+  when: webapi_api_key is defined and (webapi_api_key | length > 0)
+  no_log: true
+
+- name: Update warranty.apikey in shared application.properties
+  ansible.builtin.lineinfile:
+    path: "/docker/tellmon/config/application.properties"
+    regexp: '^warranty\.apikey\s*='
+    line: "warranty.apikey={{ warranty_api_key }}"
+  when: warranty_api_key is defined and (warranty_api_key | length > 0)
+  no_log: true
+
+- name: Update lang.apikey in shared application.properties
+  ansible.builtin.lineinfile:
+    path: "/docker/tellmon/config/application.properties"
+    regexp: '^lang\.apikey\s*='
+    line: "lang.apikey={{ lang_api_key }}"
+  when: lang_api_key is defined and (lang_api_key | length > 0)
+  no_log: true
+
+- name: Update lang.app.code in shared application.properties
+  ansible.builtin.lineinfile:
+    path: "/docker/tellmon/config/application.properties"
+    regexp: '^lang\.app\.code\s*='
+    line: "lang.app.code={{ lang_app_code }}"
+  when: lang_app_code is defined and (lang_app_code | length > 0)
+  no_log: true
+
+- name: Pull docker image and up
+  community.docker.docker_compose_v2:
+    project_src: /docker/tellmon
+    files:
+      - docker-compose.yml
+    state: present
+    pull: always
+
+- name: Wait for receiver to be healthy
+  community.docker.docker_container_info:
+    name: tellmon_receiver
+  until: "container_info.container.State.Health.Status == 'healthy'"
+  register: container_info
+  retries: 20
+  delay: 10
+
+- name: Wait for backend to be healthy
+  community.docker.docker_container_info:
+    name: tellmon_backend
+  until: "container_info.container.State.Health.Status == 'healthy'"
+  register: container_info
+  retries: 20
+  delay: 10
+
+- name: Remove unused docker images and builder cache
+  community.docker.docker_prune:
+    images: true
+    builder_cache: true

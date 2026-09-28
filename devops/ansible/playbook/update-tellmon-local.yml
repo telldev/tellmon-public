@@ -1,0 +1,10 @@
+---
+- name: Update Tellmon images on localhost
+  hosts: localhost
+  connection: local
+  become: true
+  vars:
+    tellmon_helper_bin_src: "/docker/tellmon/bin"
+  tasks:
+    - name: Import update Tellmon tasks
+      ansible.builtin.import_tasks: update-tellmon-tasks.yml

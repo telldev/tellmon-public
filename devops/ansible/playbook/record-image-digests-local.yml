@@ -1,0 +1,63 @@
+---
+- name: Record installed Docker image digests
+  hosts: localhost
+  connection: local
+  become: true
+  tasks:
+    - name: Inspect pulled images and save their repository digests
+      ansible.builtin.shell: |
+        python3 - <<'PY'
+        import json
+        import os
+        import subprocess
+        import tempfile
+
+        compose_file = "/docker/tellmon/docker-compose.yml"
+        digest_file = "/docker/tellmon/config/image-digests.json"
+
+        def repository_name(value):
+            for prefix in ("docker.io/", "registry-1.docker.io/", "library/"):
+                if value.startswith(prefix):
+                    value = value[len(prefix):]
+            return value
+
+        compose = json.loads(subprocess.check_output(
+            ["docker", "compose", "-f", compose_file, "config", "--format", "json"],
+            text=True,
+        ))
+        images = {}
+        for service_name, service in compose["services"].items():
+            image = service["image"]
+            inspected = json.loads(subprocess.check_output(
+                ["docker", "image", "inspect", image], text=True,
+            ))[0]
+            expected = repository_name(image.rsplit(":", 1)[0])
+            digest = None
+            for value in inspected.get("RepoDigests") or []:
+                repository, separator, candidate = value.partition("@")
+                if separator and repository_name(repository) == expected:
+                    digest = candidate
+                    break
+            if (digest is None or not digest.startswith("sha256:")
+                    or len(digest) != 71
+                    or any(character not in "0123456789abcdefABCDEF" for character in digest[7:])):
+                raise RuntimeError(f"No matching repository digest for {image}")
+            images[service_name] = {"image": image, "digest": digest}
+
+        fd, temporary = tempfile.mkstemp(
+            prefix=".image-digests.", dir=os.path.dirname(digest_file)
+        )
+        try:
+            with os.fdopen(fd, "w") as stream:
+                json.dump(images, stream, indent=2, sort_keys=True)
+                stream.write("\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.chmod(temporary, 0o644)
+            os.replace(temporary, digest_file)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+        PY
+      args:
+        executable: /bin/bash
