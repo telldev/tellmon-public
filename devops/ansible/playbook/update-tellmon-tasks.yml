@@ -11,6 +11,34 @@
       - not compose_file_stat.stat.isdir
     fail_msg: "Tellmon docker-compose.yml was not found at /docker/tellmon/docker-compose.yml. Please run the Install Tellmon action first."
 
+- name: Read deployed Compose configuration for manager modem access
+  ansible.builtin.slurp:
+    src: /docker/tellmon/docker-compose.yml
+  register: gsm_compose_file
+  no_log: true
+
+- name: Parse deployed Compose configuration
+  ansible.builtin.set_fact:
+    gsm_compose: "{{ gsm_compose_file.content | b64decode | from_yaml }}"
+  no_log: true
+
+- name: Add manager access to host USB metadata and command socket
+  ansible.builtin.set_fact:
+    gsm_compose: >-
+      {{ gsm_compose | combine({'services': {'manager': {'volumes':
+        ((gsm_compose.services.manager.volumes | default([])) +
+        ['/sys:/host/sys:ro', './reboot.sock:/var/run/reboot.sock']) | unique | list
+      }}}, recursive=true) }}
+  when: "'manager' in gsm_compose.services"
+  no_log: true
+
+- name: Save manager modem access in deployed Compose configuration
+  ansible.builtin.copy:
+    dest: /docker/tellmon/docker-compose.yml
+    content: "{{ gsm_compose | to_nice_yaml(indent=2, sort_keys=false) }}"
+  when: "'manager' in gsm_compose.services"
+  no_log: true
+
 - name: Ensure root-owned Tellmon helper directory exists
   ansible.builtin.file:
     path: "/usr/local/lib/tellmon/bin"
@@ -28,9 +56,9 @@
     mode: "0755"
   ignore_errors: true
 
-- name: Update root-owned container command wrapper as host command
+- name: Update root-owned host modem command
   ansible.builtin.copy:
-    src: "{{ tellmon_helper_bin_src }}/command.sh"
+    src: "{{ tellmon_helper_bin_src }}/command-host.sh"
     dest: "/usr/local/lib/tellmon/bin/command-host.sh"
     owner: root
     group: root

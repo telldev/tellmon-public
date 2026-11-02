@@ -166,6 +166,8 @@ services:
       SPRING_DATASOURCE_PASSWORD: {{ postgres_password | default('secret') | to_json }}
       MANAGER_PORT: "8890"
     volumes:
+      - /sys:/host/sys:ro
+      - ./reboot.sock:/var/run/reboot.sock
       - ./config:/home/tellmon/TELLMon/config
       - ./bin:/home/tellmon/TELLMon/bin
     healthcheck:
