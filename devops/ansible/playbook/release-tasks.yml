@@ -305,6 +305,8 @@
       - docker-compose.yml
     state: present
     pull: always
+    # The listener was restarted above, replacing the socket inode.
+    recreate: always
 
 - name: Wait for receiver to be healthy
   community.docker.docker_container_info:
@@ -326,3 +328,6 @@
   community.docker.docker_prune:
     images: true
     builder_cache: true
+
+- name: Install ordered startup for subsequent boots
+  ansible.builtin.import_tasks: install-startup-tasks.yml

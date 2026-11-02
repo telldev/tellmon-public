@@ -37,6 +37,21 @@
     mode: "0755"
   ignore_errors: true
 
+- name: Update host reboot listener
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../tellmon-reboot-listener.py"
+    dest: /usr/local/bin/tellmon-reboot-listener.py
+    owner: root
+    group: root
+    mode: "0755"
+  register: reboot_listener_update
+
+- name: Restart updated host reboot listener
+  ansible.builtin.systemd:
+    name: tellmon-reboot-listener.service
+    state: restarted
+  when: reboot_listener_update.changed
+
 - name: Stop docker compose
   community.docker.docker_compose_v2:
     project_src: /docker/tellmon
@@ -100,6 +115,8 @@
       - docker-compose.yml
     state: present
     pull: always
+    # Refresh the bind mount if the host listener replaced its socket.
+    recreate: always
 
 - name: Wait for receiver to be healthy
   community.docker.docker_container_info:
@@ -121,3 +138,6 @@
   community.docker.docker_prune:
     images: true
     builder_cache: true
+
+- name: Install ordered startup for subsequent boots
+  ansible.builtin.import_tasks: install-startup-tasks.yml
