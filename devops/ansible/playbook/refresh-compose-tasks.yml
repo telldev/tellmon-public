@@ -1,0 +1,51 @@
+---
+- name: Read installed Compose settings before replacing configuration
+  ansible.builtin.slurp:
+    src: /docker/tellmon/docker-compose.yml
+  register: installed_compose_file
+  no_log: true
+
+- name: Parse installed Compose settings
+  ansible.builtin.set_fact:
+    installed_compose: "{{ installed_compose_file.content | b64decode | from_yaml }}"
+  no_log: true
+
+- name: Check installed runtime mode
+  ansible.builtin.stat:
+    path: /docker/tellmon/config/mode
+  register: installed_mode_stat
+
+- name: Read installed runtime mode
+  ansible.builtin.slurp:
+    src: /docker/tellmon/config/mode
+  register: installed_mode_file
+  when: installed_mode_stat.stat.exists
+
+- name: Preserve installation settings for the latest Compose template
+  ansible.builtin.set_fact:
+    postgres_password: "{{ installed_compose.services.postgres.environment.POSTGRES_PASSWORD }}"
+    is_physical_mode: >-
+      {{ ('PHYSICAL_MODE=true' in (installed_mode_file.content | b64decode).splitlines())
+         if installed_mode_stat.stat.exists else
+         (installed_compose.services.receiver.environment.PHYSICAL_MODE | default('false') | bool) }}
+    serial_devices: []
+  no_log: true
+
+- name: Preserve installed serial device mappings
+  ansible.builtin.set_fact:
+    serial_devices: "{{ (serial_devices + [device_path]) | unique | list }}"
+  vars:
+    device_path: "{{ item.path_on_host if item is mapping else (item.split(':') | first) }}"
+  loop: "{{ installed_compose.services.receiver.devices | default([]) }}"
+  when:
+    - is_physical_mode
+    - device_path != '/dev/ppp'
+
+- name: Rewrite deployed Compose file from the latest installation template
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/../../docker-compose.yml.j2"
+    dest: /docker/tellmon/docker-compose.yml
+    backup: true
+    mode: "0600"
+    validate: "docker compose -f %s config --quiet"
+  no_log: true

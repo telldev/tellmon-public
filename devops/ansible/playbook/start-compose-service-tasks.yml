@@ -1,0 +1,27 @@
+---
+- name: "Recreate {{ tellmon_update_service }}"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --project-directory
+      - "{{ tellmon_compose_dir | default('/docker/tellmon') }}"
+      - -f
+      - "{{ tellmon_compose_dir | default('/docker/tellmon') }}/docker-compose.yml"
+      - up
+      - --detach
+      - --no-deps
+      - --force-recreate
+      - --pull
+      - never
+      - "{{ tellmon_update_service }}"
+  changed_when: true
+
+- name: "Wait for the current {{ tellmon_update_service }} container to be ready"
+  ansible.builtin.script:
+    cmd: >-
+      {{ (playbook_dir ~ '/../../wait-compose-service.py') | quote }}
+      --compose-dir {{ (tellmon_compose_dir | default('/docker/tellmon')) | quote }}
+      --service {{ tellmon_update_service | quote }} --timeout 300
+    executable: /usr/bin/python3
+  changed_when: false

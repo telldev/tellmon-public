@@ -11,6 +11,9 @@
       - not compose_file_stat.stat.isdir
     fail_msg: "Tellmon docker-compose.yml was not found at /docker/tellmon/docker-compose.yml. Please run the Install Tellmon action first."
 
+- name: Refresh Compose configuration before updating containers
+  ansible.builtin.import_tasks: refresh-compose-tasks.yml
+
 - name: Read deployed Compose configuration for manager modem access
   ansible.builtin.slurp:
     src: /docker/tellmon/docker-compose.yml
@@ -80,14 +83,6 @@
     state: restarted
   when: reboot_listener_update.changed
 
-- name: Stop docker compose
-  community.docker.docker_compose_v2:
-    project_src: /docker/tellmon
-    files:
-      - docker-compose.yml
-    state: stopped
-  ignore_errors: true
-
 - name: Update jwt.secret in shared application.properties
   ansible.builtin.lineinfile:
     path: "/docker/tellmon/config/application.properties"
@@ -136,31 +131,8 @@
   when: lang_app_code is defined and (lang_app_code | length > 0)
   no_log: true
 
-- name: Pull docker image and up
-  community.docker.docker_compose_v2:
-    project_src: /docker/tellmon
-    files:
-      - docker-compose.yml
-    state: present
-    pull: always
-    # Refresh the bind mount if the host listener replaced its socket.
-    recreate: always
-
-- name: Wait for receiver to be healthy
-  community.docker.docker_container_info:
-    name: tellmon_receiver
-  until: "container_info.container.State.Health.Status == 'healthy'"
-  register: container_info
-  retries: 20
-  delay: 10
-
-- name: Wait for backend to be healthy
-  community.docker.docker_container_info:
-    name: tellmon_backend
-  until: "container_info.container.State.Health.Status == 'healthy'"
-  register: container_info
-  retries: 20
-  delay: 10
+- name: Update containers in dependency order
+  ansible.builtin.import_tasks: update-compose-containers-tasks.yml
 
 - name: Remove unused docker images and builder cache
   community.docker.docker_prune:
