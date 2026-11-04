@@ -7,10 +7,10 @@ services:
       - ./config/certificate:/etc/caddy/certs:ro
       - caddy_data:/data/caddy
       - caddy_config:/config
-    ports:
-      - 80:80
-      - 443:443
-      - 8443:8443
+    # Reach the backend on host loopback while preserving existing Caddyfile upstreams.
+    network_mode: host
+    extra_hosts:
+      - "backend:127.0.0.1"
     depends_on:
       backend:
         condition: service_healthy
@@ -54,13 +54,16 @@ services:
         condition: service_healthy
       manager:
         condition: service_healthy
+    # Share the real host interfaces, including dynamically created PPP interfaces.
+    network_mode: host
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      # The receiver reads the shared JDBC configuration directly (without Spring overrides).
+      - "postgres:127.0.0.1"
     environment:
-      MANAGER_URL: "http://host.docker.internal:8890"
+      MANAGER_URL: "http://127.0.0.1:8890"
       SPRING_PROFILES_ACTIVE: docker
-      # Bind container sockets independently of the manager's host interfaces.
-      RECEIVER_BIND_ADDRESS: "0.0.0.0"
+      # Device listeners use host interface addresses supplied by the manager.
+      # TellAdminListener always binds to 127.0.0.1:3536.
       PHYSICAL_MODE: "{{ 'true' if is_physical_mode else 'false' }}"
 {% if is_physical_mode %}
     device_cgroup_rules:
@@ -86,13 +89,6 @@ services:
       - ./device_updates:/home/tellmon/TELLMon/device_updates
       - ./reboot.sock:/var/run/reboot.sock
       - /sys:/host/sys:ro
-    ports:
-      - 3535:3535
-      - 3333:3333
-      - 3545:3545/udp
-      - 3000:3000
-      - 3001:3001/udp
-      - 3569:3569/udp
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f tellreceiver || exit 1"]
       interval: 10s
@@ -115,14 +111,14 @@ services:
         condition: service_healthy
       manager:
         condition: service_healthy
+    # Reach the receiver's admin socket through host loopback.
+    network_mode: host
     extra_hosts:
-      - "host.docker.internal:host-gateway"
-    ports:
-      # Host-networked manager sends events through loopback only.
-      - "127.0.0.1:8889:8889"
+      - "postgres:127.0.0.1"
     environment:
-      MANAGER_URL: "http://host.docker.internal:8890"
-      APP_RECEIVER_HOST: receiver
+      MANAGER_URL: "http://127.0.0.1:8890"
+      APP_RECEIVER_HOST: "127.0.0.1"
+      SERVER_ADDRESS: "127.0.0.1"
       SPRING_PROFILES_ACTIVE: docker
       SPRING_DATASOURCE_PASSWORD: {{ postgres_password | default('secret') | to_json }}
       PHYSICAL_MODE: "{{ 'true' if is_physical_mode else 'false' }}"
