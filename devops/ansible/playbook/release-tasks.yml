@@ -285,44 +285,11 @@
     mode: "0666"
   when: is_physical_mode
 
-- name: Render docker-compose file
-  ansible.builtin.template:
-    src: "{{ playbook_dir }}/../../docker-compose.yml.j2"
-    dest: "/docker/tellmon/docker-compose.yml"
+- name: Refresh docker-compose file for installation
+  ansible.builtin.import_tasks: refresh-compose-tasks.yml
 
-- name: Stop docker compose
-  community.docker.docker_compose_v2:
-    project_src: /docker/tellmon
-    files:
-      - docker-compose.yml
-    state: stopped
-  ignore_errors: true
-
-- name: Pull docker image and up
-  community.docker.docker_compose_v2:
-    project_src: /docker/tellmon
-    files:
-      - docker-compose.yml
-    state: present
-    pull: always
-    # The listener was restarted above, replacing the socket inode.
-    recreate: always
-
-- name: Wait for receiver to be healthy
-  community.docker.docker_container_info:
-    name: tellmon_receiver
-  until: "container_info.container.State.Health.Status == 'healthy'"
-  register: container_info
-  retries: 20
-  delay: 10
-
-- name: Wait for backend to be healthy
-  community.docker.docker_container_info:
-    name: tellmon_backend
-  until: "container_info.container.State.Health.Status == 'healthy'"
-  register: container_info
-  retries: 20
-  delay: 10
+- name: Start containers in dependency order
+  ansible.builtin.import_tasks: start-compose-tasks.yml
 
 - name: Remove unused docker images and builder cache
   community.docker.docker_prune:

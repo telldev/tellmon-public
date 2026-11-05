@@ -11,36 +11,10 @@
       - not compose_file_stat.stat.isdir
     fail_msg: "Tellmon docker-compose.yml was not found at /docker/tellmon/docker-compose.yml. Please run the Install Tellmon action first."
 
-- name: Refresh Compose configuration before updating containers
+- name: Refresh docker-compose file before updating containers
   ansible.builtin.import_tasks: refresh-compose-tasks.yml
-
-- name: Read deployed Compose configuration for manager modem access
-  ansible.builtin.slurp:
-    src: /docker/tellmon/docker-compose.yml
-  register: gsm_compose_file
-  no_log: true
-
-- name: Parse deployed Compose configuration
-  ansible.builtin.set_fact:
-    gsm_compose: "{{ gsm_compose_file.content | b64decode | from_yaml }}"
-  no_log: true
-
-- name: Add manager access to host USB metadata and command socket
-  ansible.builtin.set_fact:
-    gsm_compose: >-
-      {{ gsm_compose | combine({'services': {'manager': {'volumes':
-        ((gsm_compose.services.manager.volumes | default([])) +
-        ['/sys:/host/sys:ro', './reboot.sock:/var/run/reboot.sock']) | unique | list
-      }}}, recursive=true) }}
-  when: "'manager' in gsm_compose.services"
-  no_log: true
-
-- name: Save manager modem access in deployed Compose configuration
-  ansible.builtin.copy:
-    dest: /docker/tellmon/docker-compose.yml
-    content: "{{ gsm_compose | to_nice_yaml(indent=2, sort_keys=false) }}"
-  when: "'manager' in gsm_compose.services"
-  no_log: true
+  vars:
+    preserve_installed_runtime: true
 
 - name: Ensure root-owned Tellmon helper directory exists
   ansible.builtin.file:
@@ -131,8 +105,8 @@
   when: lang_app_code is defined and (lang_app_code | length > 0)
   no_log: true
 
-- name: Update containers in dependency order
-  ansible.builtin.import_tasks: update-compose-containers-tasks.yml
+- name: Start containers in dependency order
+  ansible.builtin.import_tasks: start-compose-tasks.yml
 
 - name: Remove unused docker images and builder cache
   community.docker.docker_prune:

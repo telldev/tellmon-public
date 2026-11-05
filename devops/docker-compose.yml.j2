@@ -7,7 +7,7 @@ services:
       - ./config/certificate:/etc/caddy/certs:ro
       - caddy_data:/data/caddy
       - caddy_config:/config
-    # Reach the backend on host loopback while preserving existing Caddyfile upstreams.
+    # Reach the backend on host loopback through the existing Caddy upstream.
     network_mode: host
     extra_hosts:
       - "backend:127.0.0.1"
@@ -54,16 +54,14 @@ services:
         condition: service_healthy
       manager:
         condition: service_healthy
-    # Share the real host interfaces, including dynamically created PPP interfaces.
+    # Use host interfaces, including dynamically created PPP interfaces.
     network_mode: host
     extra_hosts:
-      # The receiver reads the shared JDBC configuration directly (without Spring overrides).
+      # The receiver reads the shared JDBC configuration directly.
       - "postgres:127.0.0.1"
     environment:
       MANAGER_URL: "http://127.0.0.1:8890"
       SPRING_PROFILES_ACTIVE: docker
-      # Device listeners use host interface addresses supplied by the manager.
-      # TellAdminListener always binds to 127.0.0.1:3536.
       PHYSICAL_MODE: "{{ 'true' if is_physical_mode else 'false' }}"
 {% if is_physical_mode %}
     device_cgroup_rules:
@@ -111,7 +109,7 @@ services:
         condition: service_healthy
       manager:
         condition: service_healthy
-    # Reach the receiver's admin socket through host loopback.
+    # Connect to the receiver admin listener on host loopback.
     network_mode: host
     extra_hosts:
       - "postgres:127.0.0.1"
