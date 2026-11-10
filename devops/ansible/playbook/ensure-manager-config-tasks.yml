@@ -1,0 +1,33 @@
+---
+- name: Read shared application properties
+  ansible.builtin.slurp:
+    src: /docker/tellmon/config/application.properties
+  register: manager_application_properties
+  no_log: true
+
+- name: Check existing Manager configuration
+  ansible.builtin.set_fact:
+    installed_manager_token: >-
+      {{ (manager_application_properties.content | b64decode
+          | regex_findall('(?m)^[ \t]*manager\.authorization\.token[ \t]*[=:][ \t]*(.*)$')
+          | last | default('')) | trim }}
+    installed_manager_port: >-
+      {{ (manager_application_properties.content | b64decode
+          | regex_findall('(?m)^[ \t]*manager\.port[ \t]*[=:][ \t]*(.*)$')
+          | last | default('')) | trim }}
+  no_log: true
+
+- name: Generate missing Manager authorization token
+  ansible.builtin.lineinfile:
+    path: /docker/tellmon/config/application.properties
+    regexp: '^[ \t]*manager\.authorization\.token[ \t]*[=:]'
+    line: "manager.authorization.token={{ lookup('ansible.builtin.password', '/dev/null', length=32, chars=['ascii_letters', 'digits']) }}"
+  when: installed_manager_token | length == 0
+  no_log: true
+
+- name: Set missing Manager port
+  ansible.builtin.lineinfile:
+    path: /docker/tellmon/config/application.properties
+    regexp: '^[ \t]*manager\.port[ \t]*[=:]'
+    line: 'manager.port=8890'
+  when: installed_manager_port | length == 0

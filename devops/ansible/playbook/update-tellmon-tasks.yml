@@ -11,6 +11,9 @@
       - not compose_file_stat.stat.isdir
     fail_msg: "Tellmon docker-compose.yml was not found at /docker/tellmon/docker-compose.yml. Please run the Install Tellmon action first."
 
+- name: Ensure Manager configuration before updating containers
+  ansible.builtin.import_tasks: ensure-manager-config-tasks.yml
+
 - name: Refresh docker-compose file before updating containers
   ansible.builtin.import_tasks: refresh-compose-tasks.yml
   vars:
