@@ -66,10 +66,16 @@
     name:
       - python3
       - python3-docker
-      - usbutils
       - socat
+    state: present
+
+- name: Install physical modem dependencies
+  ansible.builtin.apt:
+    name:
+      - usbutils
       - wvdial
     state: present
+  when: is_physical_mode | bool
 
 - name: Creates project directory if needed
   ansible.builtin.file:

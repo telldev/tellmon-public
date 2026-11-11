@@ -1,0 +1,12 @@
+[Unit]
+Description=Tellmon Host Reboot Listener
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/bin/tellmon-reboot-listener.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

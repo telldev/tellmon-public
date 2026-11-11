@@ -27,16 +27,27 @@
     group: root
     mode: "0755"
 
-- name: Update root-owned Tellmon helper scripts
+- name: Update root-owned physical Tellmon helper scripts
   ansible.builtin.copy:
     src: "{{ tellmon_helper_bin_src }}/"
     dest: "/usr/local/lib/tellmon/bin/"
     owner: root
     group: root
     mode: "0755"
+  when: is_physical_mode | bool
   ignore_errors: true
 
-- name: Update root-owned host modem command
+- name: Update root-owned Tellmon network helper scripts
+  ansible.builtin.copy:
+    src: "{{ tellmon_helper_bin_src }}/scripts/"
+    dest: "/usr/local/lib/tellmon/bin/scripts/"
+    owner: root
+    group: root
+    mode: "0755"
+  when: not (is_physical_mode | bool)
+  ignore_errors: true
+
+- name: Update root-owned host command helper
   ansible.builtin.copy:
     src: "{{ tellmon_helper_bin_src }}/command-host.sh"
     dest: "/usr/local/lib/tellmon/bin/command-host.sh"
