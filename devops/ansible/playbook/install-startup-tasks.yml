@@ -86,14 +86,6 @@
     - wvdial_3g.sh
     - internal_3g.sh
 
-- name: Install Tellmon Compose startup helper
-  ansible.builtin.copy:
-    src: "{{ playbook_dir }}/../../tellmon-compose-start.py"
-    dest: /usr/local/bin/tellmon-compose-start.py
-    owner: root
-    group: root
-    mode: "0755"
-
 - name: Install Tellmon boot preparation script
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../../tellmon-start.py"

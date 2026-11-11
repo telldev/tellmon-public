@@ -1,8 +1,63 @@
 ---
-- name: Pull images and recreate containers in dependency order
-  ansible.builtin.script:
-    cmd: >-
-      {{ (playbook_dir ~ '/../../tellmon-compose-start.py') | quote }}
-      --compose-dir /docker/tellmon --pull
-    executable: /usr/bin/python3
+- name: Validate Compose configuration before downloading images
+  ansible.builtin.command:
+    argv: [docker, compose, config, --quiet]
+    chdir: /docker/tellmon
+  changed_when: false
+
+# Leave the running stack untouched if any image cannot be downloaded.
+- name: Pull Tellmon images before stopping containers
+  ansible.builtin.command:
+    argv: [docker, compose, pull, --quiet]
+    chdir: /docker/tellmon
   changed_when: true
+
+- name: Start Tellmon using Compose dependencies and health checks
+  block:
+    - name: Stop containers before recreating the stack
+      ansible.builtin.command:
+        argv: [docker, compose, stop]
+        chdir: /docker/tellmon
+      changed_when: true
+
+    - name: Recreate containers and wait for the stack to be healthy
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - up
+          - --detach
+          - --force-recreate
+          - --pull
+          - never
+          - --wait
+          - --wait-timeout
+          - "1500"
+        chdir: /docker/tellmon
+      changed_when: true
+
+  rescue:
+    - name: Collect container status after startup failure
+      ansible.builtin.command:
+        argv: [docker, compose, ps, --all]
+        chdir: /docker/tellmon
+      register: tellmon_startup_status
+      changed_when: false
+      failed_when: false
+
+    - name: Collect container logs after startup failure
+      ansible.builtin.command:
+        argv: [docker, compose, logs, --no-color, --tail, "80"]
+        chdir: /docker/tellmon
+      register: tellmon_startup_logs
+      changed_when: false
+      failed_when: false
+
+    - name: Report Tellmon startup failure
+      ansible.builtin.fail:
+        msg: |
+          Tellmon startup failed: {{ ansible_failed_result.stderr | default(ansible_failed_result.msg | default('Compose failed')) }}
+          {{ tellmon_startup_status.stdout }}
+          {{ tellmon_startup_status.stderr }}
+          {{ tellmon_startup_logs.stdout }}
+          {{ tellmon_startup_logs.stderr }}

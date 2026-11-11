@@ -64,11 +64,11 @@ def main():
     model = json.loads(subprocess.check_output(compose + ["config", "--format", "json"]))
     prepare_devices(model)
     wait_for(lambda: socket_ready(PROJECT_DIR / "reboot.sock"), "host reboot listener")
-    # Use the same dependency order as installation and updates. Separate
-    # Compose calls avoid stale IDs when replacing dependencies and socket mounts.
+    # Recreate mounts pointing at the previous listener's socket. Compose
+    # applies the dependencies and health checks defined in docker-compose.yml.
     subprocess.run(
-        ["/usr/bin/python3", "/usr/local/bin/tellmon-compose-start.py",
-         "--compose-dir", str(PROJECT_DIR)],
+        compose + ["up", "--detach", "--force-recreate", "--pull", "never",
+                   "--wait", "--wait-timeout", "1500"],
         check=True,
     )
 
