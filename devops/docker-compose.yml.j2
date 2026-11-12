@@ -7,10 +7,10 @@ services:
       - ./config/certificate:/etc/caddy/certs:ro
       - caddy_data:/data/caddy
       - caddy_config:/config
-    ports:
-      - 80:80
-      - 443:443
-      - 8443:8443
+    # Reach the backend on host loopback through the existing Caddy upstream.
+    network_mode: host
+    extra_hosts:
+      - "backend:127.0.0.1"
     depends_on:
       backend:
         condition: service_healthy
@@ -52,7 +52,15 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      manager:
+        condition: service_healthy
+    # Use host interfaces, including dynamically created PPP interfaces.
+    network_mode: host
+    extra_hosts:
+      # The receiver reads the shared JDBC configuration directly.
+      - "postgres:127.0.0.1"
     environment:
+      MANAGER_URL: "http://127.0.0.1:8890"
       SPRING_PROFILES_ACTIVE: docker
       PHYSICAL_MODE: "{{ 'true' if is_physical_mode else 'false' }}"
 {% if is_physical_mode %}
@@ -79,13 +87,6 @@ services:
       - ./device_updates:/home/tellmon/TELLMon/device_updates
       - ./reboot.sock:/var/run/reboot.sock
       - /sys:/host/sys:ro
-    ports:
-      - 3535:3535
-      - 3333:3333
-      - 3545:3545
-      - 3000:3000
-      - 3001:3001
-      - 3569:3569
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f tellreceiver || exit 1"]
       interval: 10s
@@ -106,7 +107,16 @@ services:
         condition: service_healthy
       receiver:
         condition: service_healthy
+      manager:
+        condition: service_healthy
+    # Connect to the receiver admin listener on host loopback.
+    network_mode: host
+    extra_hosts:
+      - "postgres:127.0.0.1"
     environment:
+      MANAGER_URL: "http://127.0.0.1:8890"
+      APP_RECEIVER_HOST: "127.0.0.1"
+      SERVER_ADDRESS: "127.0.0.1"
       SPRING_PROFILES_ACTIVE: docker
       SPRING_DATASOURCE_PASSWORD: {{ postgres_password | default('secret') | to_json }}
       PHYSICAL_MODE: "{{ 'true' if is_physical_mode else 'false' }}"
@@ -120,10 +130,42 @@ services:
       - dialout
     volumes:
       - ./config:/home/tellmon/TELLMon/config
+      - ./bin:/home/tellmon/TELLMon/bin
       - ./device_updates:/home/tellmon/TELLMon/device_updates
       - ./reboot.sock:/var/run/reboot.sock
     healthcheck:
       test: ["CMD-SHELL", "nc -z 127.0.0.1 8889 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  manager:
+    container_name: tellmon_manager
+    restart: unless-stopped
+    image: tellsoftware/tellmon-manager:latest
+    # Share host interfaces so Java can inspect the real network.
+    network_mode: host
+    logging:
+      options:
+        max-size: "50m"
+        max-file: "5"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # PostgreSQL is published on host loopback; Docker DNS is unavailable here.
+      SPRING_DATASOURCE_URL: "jdbc:postgresql://127.0.0.1:5432/tellmon"
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: {{ postgres_password | default('secret') | to_json }}
+      MANAGER_PORT: "8890"
+    volumes:
+      - /sys:/host/sys:ro
+      - ./reboot.sock:/var/run/reboot.sock
+      - ./config:/home/tellmon/TELLMon/config
+      - ./bin:/home/tellmon/TELLMon/bin
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 8890 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5

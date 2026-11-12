@@ -1,0 +1,111 @@
+---
+- name: Configure physical modem support
+  when: is_physical_mode | bool
+  block:
+    - name: Reserve Tellmon USB modems for receiver and wvdial
+      ansible.builtin.copy:
+        dest: /etc/udev/rules.d/99-tellmon-modem.rules
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Tellmon owns these modems; ModemManager must not probe their AT ports.
+          ATTRS{idVendor}=="05c6", ATTRS{idProduct}=="9003", ENV{ID_MM_DEVICE_IGNORE}="1"
+          ATTRS{idVendor}=="2c7c", ATTRS{idProduct}=="0125", ENV{ID_MM_DEVICE_IGNORE}="1"
+      register: tellmon_modem_rules
+
+    - name: Reload Tellmon modem rules
+      ansible.builtin.command: udevadm control --reload-rules
+      when: tellmon_modem_rules.changed
+
+    - name: Apply modem rules to connected USB devices and serial ports
+      ansible.builtin.command:
+        argv:
+          - udevadm
+          - trigger
+          - --action=change
+          - --subsystem-match=usb
+          - --subsystem-match=tty
+      when: tellmon_modem_rules.changed
+
+    - name: Wait for modem rule processing
+      ansible.builtin.command: udevadm settle
+      changed_when: false
+      when: tellmon_modem_rules.changed
+
+    - name: Check whether ModemManager is running
+      ansible.builtin.command: systemctl is-active --quiet ModemManager.service
+      register: tellmon_modem_manager_active
+      changed_when: false
+      failed_when: false
+      when: tellmon_modem_rules.changed
+
+    - name: Release Tellmon modem ports from ModemManager
+      ansible.builtin.systemd:
+        name: ModemManager.service
+        state: restarted
+      when:
+        - tellmon_modem_rules.changed
+        - tellmon_modem_manager_active.rc | default(1) == 0
+
+    - name: Ensure modem supervisor locking is available
+      ansible.builtin.package:
+        name: util-linux
+        state: present
+
+- name: Ensure root-owned Tellmon helper directory exists
+  ansible.builtin.file:
+    path: /usr/local/lib/tellmon/bin
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Manager seeds the shared bin directory from its image before this task runs.
+# command.sh in that directory is the container socket wrapper; the host must
+# use command-host.sh to execute modem commands rather than call its own socket.
+- name: Install host command helper from the deployed manager image
+  ansible.builtin.copy:
+    src: /docker/tellmon/bin/command-host.sh
+    dest: /usr/local/lib/tellmon/bin/command-host.sh
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install host modem helpers from the deployed manager image
+  ansible.builtin.copy:
+    src: "/docker/tellmon/bin/{{ item }}"
+    dest: "/usr/local/lib/tellmon/bin/{{ item }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+  when: is_physical_mode | bool
+  loop:
+    - wvdial_3g.sh
+    - internal_3g.sh
+
+- name: Install Tellmon boot preparation script
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../tellmon-start.py"
+    dest: /usr/local/bin/tellmon-start.py
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install Tellmon ordered startup service
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../tellmon.service"
+    dest: /etc/systemd/system/tellmon.service
+    owner: root
+    group: root
+    mode: "0644"
+
+# The calling playbook starts Compose for this installation/update. Enable the
+# unit for subsequent boots without restarting the freshly installed stack.
+- name: Enable Tellmon startup at boot
+  ansible.builtin.systemd:
+    name: tellmon.service
+    enabled: true
+    daemon_reload: true

@@ -11,6 +11,14 @@
       - not compose_file_stat.stat.isdir
     fail_msg: "Tellmon docker-compose.yml was not found at /docker/tellmon/docker-compose.yml. Please run the Install Tellmon action first."
 
+- name: Ensure Manager configuration before updating containers
+  ansible.builtin.import_tasks: ensure-manager-config-tasks.yml
+
+- name: Refresh docker-compose file before updating containers
+  ansible.builtin.import_tasks: refresh-compose-tasks.yml
+  vars:
+    preserve_installed_runtime: true
+
 - name: Ensure root-owned Tellmon helper directory exists
   ansible.builtin.file:
     path: "/usr/local/lib/tellmon/bin"
@@ -19,31 +27,49 @@
     group: root
     mode: "0755"
 
-- name: Update root-owned Tellmon helper scripts
+- name: Update root-owned physical Tellmon helper scripts
   ansible.builtin.copy:
     src: "{{ tellmon_helper_bin_src }}/"
     dest: "/usr/local/lib/tellmon/bin/"
     owner: root
     group: root
     mode: "0755"
+  when: is_physical_mode | bool
   ignore_errors: true
 
-- name: Update root-owned container command wrapper as host command
+- name: Update root-owned Tellmon network helper scripts
   ansible.builtin.copy:
-    src: "{{ tellmon_helper_bin_src }}/command.sh"
+    src: "{{ tellmon_helper_bin_src }}/scripts/"
+    dest: "/usr/local/lib/tellmon/bin/scripts/"
+    owner: root
+    group: root
+    mode: "0755"
+  when: not (is_physical_mode | bool)
+  ignore_errors: true
+
+- name: Update root-owned host command helper
+  ansible.builtin.copy:
+    src: "{{ tellmon_helper_bin_src }}/command-host.sh"
     dest: "/usr/local/lib/tellmon/bin/command-host.sh"
     owner: root
     group: root
     mode: "0755"
   ignore_errors: true
 
-- name: Stop docker compose
-  community.docker.docker_compose_v2:
-    project_src: /docker/tellmon
-    files:
-      - docker-compose.yml
-    state: stopped
-  ignore_errors: true
+- name: Update host reboot listener
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../tellmon-reboot-listener.py"
+    dest: /usr/local/bin/tellmon-reboot-listener.py
+    owner: root
+    group: root
+    mode: "0755"
+  register: reboot_listener_update
+
+- name: Restart updated host reboot listener
+  ansible.builtin.systemd:
+    name: tellmon-reboot-listener.service
+    state: restarted
+  when: reboot_listener_update.changed
 
 - name: Update jwt.secret in shared application.properties
   ansible.builtin.lineinfile:
@@ -93,31 +119,13 @@
   when: lang_app_code is defined and (lang_app_code | length > 0)
   no_log: true
 
-- name: Pull docker image and up
-  community.docker.docker_compose_v2:
-    project_src: /docker/tellmon
-    files:
-      - docker-compose.yml
-    state: present
-    pull: always
-
-- name: Wait for receiver to be healthy
-  community.docker.docker_container_info:
-    name: tellmon_receiver
-  until: "container_info.container.State.Health.Status == 'healthy'"
-  register: container_info
-  retries: 20
-  delay: 10
-
-- name: Wait for backend to be healthy
-  community.docker.docker_container_info:
-    name: tellmon_backend
-  until: "container_info.container.State.Health.Status == 'healthy'"
-  register: container_info
-  retries: 20
-  delay: 10
+- name: Start containers in dependency order
+  ansible.builtin.import_tasks: start-compose-tasks.yml
 
 - name: Remove unused docker images and builder cache
   community.docker.docker_prune:
     images: true
     builder_cache: true
+
+- name: Install ordered startup for subsequent boots
+  ansible.builtin.import_tasks: install-startup-tasks.yml

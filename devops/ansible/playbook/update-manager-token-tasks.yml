@@ -1,0 +1,70 @@
+---
+- name: Validate required Manager token variable
+  ansible.builtin.assert:
+    that:
+      - manager_token is defined
+      - manager_token is string
+      - manager_token | length > 0
+    fail_msg: "manager_token (Manager appID) must be provided"
+  no_log: true
+
+- name: Check deployed docker-compose file
+  ansible.builtin.stat:
+    path: /docker/tellmon/docker-compose.yml
+  register: tellmon_compose_file
+
+- name: Check shared application properties
+  ansible.builtin.stat:
+    path: /docker/tellmon/config/application.properties
+  register: application_properties
+
+- name: Ensure Tellmon is deployed
+  ansible.builtin.assert:
+    that:
+      - tellmon_compose_file.stat.isreg | default(false)
+      - application_properties.stat.isreg | default(false)
+    fail_msg: "Tellmon must be installed at /docker/tellmon before updating the Manager token"
+
+- name: Escape Manager token for Java properties
+  ansible.builtin.set_fact:
+    manager_token_properties: >-
+      {{
+        manager_token
+        | replace('\\', '\\\\')
+        | replace('\n', '\\n')
+        | replace('\r', '\\r')
+        | replace('\t', '\\t')
+        | replace('\f', '\\f')
+        | replace(':', '\\:')
+        | replace('=', '\\=')
+        | replace(' ', '\\ ')
+      }}
+  no_log: true
+
+- name: Update Manager token in shared application properties
+  ansible.builtin.lineinfile:
+    path: /docker/tellmon/config/application.properties
+    regexp: '^\s*manager\.authorization\.token\s*[=:]'
+    line: "manager.authorization.token={{ manager_token_properties }}"
+  no_log: true
+
+- name: Restart services to load the updated Manager token
+  community.docker.docker_compose_v2:
+    project_src: /docker/tellmon
+    state: restarted
+    services:
+      - manager
+      - receiver
+      - backend
+
+- name: Wait for Tellmon services to be healthy
+  community.docker.docker_container_info:
+    name: "{{ item }}"
+  register: container_info
+  until: (container_info.container.State.Health.Status | default('')) == 'healthy'
+  retries: 30
+  delay: 10
+  loop:
+    - tellmon_manager
+    - tellmon_receiver
+    - tellmon_backend

@@ -1,0 +1,21 @@
+[Unit]
+Description=Tellmon ordered Docker startup
+Requires=docker.service tellmon-reboot-listener.service
+Wants=network-online.target
+After=docker.service tellmon-reboot-listener.service network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/docker/tellmon
+ExecStart=/usr/bin/python3 /usr/local/bin/tellmon-start.py
+ExecStop=/usr/bin/docker compose -f /docker/tellmon/docker-compose.yml stop
+# Five services can each take up to five minutes to become healthy.
+TimeoutStartSec=30min
+TimeoutStopSec=2min
+Restart=on-failure
+RestartSec=15s
+
+[Install]
+WantedBy=multi-user.target

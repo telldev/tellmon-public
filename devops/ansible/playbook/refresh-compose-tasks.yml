@@ -1,0 +1,82 @@
+---
+- name: Check existing Compose configuration
+  ansible.builtin.stat:
+    path: /docker/tellmon/docker-compose.yml
+  register: existing_compose_stat
+
+- name: Read existing Compose configuration
+  ansible.builtin.slurp:
+    src: /docker/tellmon/docker-compose.yml
+  register: existing_compose_file
+  when: existing_compose_stat.stat.exists
+  no_log: true
+
+- name: Parse existing installation settings
+  ansible.builtin.set_fact:
+    installed_compose: "{{ (existing_compose_file.content | b64decode | from_yaml) if existing_compose_stat.stat.exists else {} }}"
+  no_log: true
+
+- name: Preserve the installed PostgreSQL password
+  ansible.builtin.set_fact:
+    postgres_password: "{{ installed_compose.services.postgres.environment.POSTGRES_PASSWORD | default(postgres_password | default('secret')) }}"
+  no_log: true
+
+- name: Check installed runtime mode
+  ansible.builtin.stat:
+    path: /docker/tellmon/config/mode
+  register: existing_mode_stat
+  when: preserve_installed_runtime | default(false) | bool
+
+- name: Read installed runtime mode
+  ansible.builtin.slurp:
+    src: /docker/tellmon/config/mode
+  register: existing_mode_file
+  when:
+    - preserve_installed_runtime | default(false) | bool
+    - existing_mode_stat.stat.exists
+
+- name: Preserve runtime mode when updating
+  ansible.builtin.set_fact:
+    is_physical_mode: >-
+      {{ ('PHYSICAL_MODE=true' in (existing_mode_file.content | b64decode).splitlines())
+         if existing_mode_stat.stat.exists else
+         (installed_compose.services.receiver.environment.PHYSICAL_MODE | default('false') | bool) }}
+    serial_devices: []
+  when: preserve_installed_runtime | default(false) | bool
+  no_log: true
+
+- name: Preserve installed serial devices when updating
+  ansible.builtin.set_fact:
+    serial_devices: "{{ (serial_devices + [device_path]) | unique | list }}"
+  vars:
+    device_path: "{{ item.path_on_host if item is mapping else (item.split(':') | first) }}"
+  loop: "{{ (installed_compose.services.receiver.devices | default([])) + (installed_compose.services.backend.devices | default([])) }}"
+  when:
+    - preserve_installed_runtime | default(false) | bool
+    - is_physical_mode
+    - device_path != '/dev/ppp'
+
+- name: Render current Compose template
+  ansible.builtin.set_fact:
+    refreshed_compose: "{{ lookup('ansible.builtin.template', playbook_dir ~ '/../../docker-compose.yml.j2') | from_yaml }}"
+  no_log: true
+
+- name: Keep the installed receiver health check unchanged
+  ansible.builtin.set_fact:
+    refreshed_compose: >-
+      {{ refreshed_compose | combine({'services': refreshed_compose.services | combine({
+           'receiver': refreshed_compose.services.receiver | combine({
+             'healthcheck': installed_compose.services.receiver.healthcheck
+           })
+         })}) }}
+  when: installed_compose.services.receiver.healthcheck is defined
+  no_log: true
+
+- name: Write refreshed docker-compose file
+  ansible.builtin.copy:
+    dest: /docker/tellmon/docker-compose.yml
+    content: "{{ refreshed_compose | to_nice_yaml(indent=2, sort_keys=false) }}"
+    mode: "0600"
+    backup: true
+    validate: "docker compose -f %s config --quiet"
+  no_log: true
