@@ -4,7 +4,8 @@
     that:
       - manager_token is defined
       - manager_token is string
-      - manager_token | length > 0
+      - manager_token | trim | length > 0
+      - not (manager_token | trim is match('(?i)^x+$'))
     fail_msg: "manager_token (Manager appID) must be provided"
   no_log: true
 

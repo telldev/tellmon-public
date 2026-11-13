@@ -291,13 +291,8 @@
     mode: "0666"
   when: is_physical_mode
 
-- name: Generate docker-compose file for installation
-  ansible.builtin.template:
-    src: "{{ playbook_dir }}/../../docker-compose.yml.j2"
-    dest: /docker/tellmon/docker-compose.yml
-    mode: "0600"
-    validate: "docker compose -f %s config --quiet"
-  no_log: true
+- name: Refresh docker-compose file for installation
+  ansible.builtin.import_tasks: refresh-compose-tasks.yml
 
 - name: Start containers in dependency order
   ansible.builtin.import_tasks: start-compose-tasks.yml

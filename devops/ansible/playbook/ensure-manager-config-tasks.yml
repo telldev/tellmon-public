@@ -17,12 +17,12 @@
           | last | default('')) | trim }}
   no_log: true
 
-- name: Generate missing Manager authorization token
+- name: Generate missing or placeholder Manager authorization token
   ansible.builtin.lineinfile:
     path: /docker/tellmon/config/application.properties
     regexp: '^[ \t]*manager\.authorization\.token[ \t]*[=:]'
     line: "manager.authorization.token={{ lookup('ansible.builtin.password', '/dev/null', length=32, chars=['ascii_letters', 'digits']) }}"
-  when: installed_manager_token | length == 0
+  when: installed_manager_token | length == 0 or installed_manager_token is match('(?i)^x+$')
   no_log: true
 
 - name: Set missing Manager port
