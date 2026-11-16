@@ -1,3 +1,4 @@
+# Canonical deployment Compose file; rendered by refresh-compose-tasks.yml.
 services:
   caddy:
     image: tellsoftware/tellmon-caddy:latest
@@ -159,6 +160,7 @@ services:
       SPRING_DATASOURCE_USERNAME: root
       SPRING_DATASOURCE_PASSWORD: {{ postgres_password | default('secret') | to_json }}
       MANAGER_PORT: "8890"
+      SERVER_ADDRESS: "127.0.0.1"
     volumes:
       - /sys:/host/sys:ro
       - ./reboot.sock:/var/run/reboot.sock

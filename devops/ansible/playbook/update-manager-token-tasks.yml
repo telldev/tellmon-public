@@ -6,7 +6,7 @@
       - manager_token is string
       - manager_token | trim | length > 0
       - not (manager_token | trim is match('(?i)^x+$'))
-    fail_msg: "manager_token (Manager appID) must be provided"
+    fail_msg: "manager_token (Manager authorization token) must be provided and must not be a placeholder"
   no_log: true
 
 - name: Check deployed docker-compose file

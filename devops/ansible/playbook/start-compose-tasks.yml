@@ -1,5 +1,5 @@
 ---
-- name: Pull images and recreate containers in dependency order
+- name: Pull images and start containers in dependency order
   ansible.builtin.script:
     cmd: >-
       {{ (playbook_dir ~ '/../../tellmon-compose-start.py') | quote }}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Recreate services separately so dependency checks never retain obsolete IDs."""
+"""Start services separately so dependency checks never retain obsolete IDs."""
 import argparse
 import json
 import subprocess
@@ -56,12 +56,15 @@ def start_stack(compose, pull=False, timeout=300):
             raise RuntimeError(
                 f"Image download failed; containers have not been stopped.\n{details}"
             ) from error
-    subprocess.run(compose + ["stop"], check=True)
     for service in SERVICES:
         try:
-            print(f"Recreating {service}", flush=True)
-            subprocess.run(compose + ["up", "--detach", "--no-deps", "--force-recreate",
-                                      "--pull", "never", service], check=True)
+            # The listener replaces its socket at boot/update. Rebind consumers
+            # and reload shared properties, but let Compose reuse postgres/caddy
+            # when their image and configuration have not changed.
+            recreate = ["--force-recreate"] if service in ("manager", "receiver", "backend") else []
+            print(f"Starting {service}", flush=True)
+            subprocess.run(compose + ["up", "--detach", "--no-deps"] + recreate +
+                           ["--pull", "never", service], check=True)
             wait_service(compose, service, timeout)
         except (subprocess.SubprocessError, RuntimeError, ValueError, OSError):
             # Surface the actual container failure instead of a missing dependency ID.

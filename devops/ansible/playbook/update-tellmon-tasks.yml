@@ -119,6 +119,9 @@
   when: lang_app_code is defined and (lang_app_code | length > 0)
   no_log: true
 
+- name: Configure stable modem devices before startup
+  ansible.builtin.import_tasks: configure-modem-tasks.yml
+
 - name: Start containers in dependency order
   ansible.builtin.import_tasks: start-compose-tasks.yml
 

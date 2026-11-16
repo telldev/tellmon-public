@@ -221,37 +221,14 @@
     state: present
     timeout: 15
 
+- name: Configure stable modem devices before detection
+  ansible.builtin.import_tasks: configure-modem-tasks.yml
+
 - name: Detect serial devices for Docker
   ansible.builtin.shell: >
     find /dev -maxdepth 1 -type c \( -name 'ttyS[0-9]*' -o -name 'ttyUSB[0-9]*' -o -name 'ttyACM[0-9]*' \) -print | sort -V
   register: detected_serial_devices
   changed_when: false
-  when: is_physical_mode
-
-- name: Create UC20 AT modem alias
-  ansible.builtin.file:
-    src: /dev/ttyUSB2
-    dest: /dev/ttyUSB-UC20-AT
-    state: link
-    force: true
-  when: is_physical_mode
-
-- name: Create UC20 PPP modem alias
-  ansible.builtin.file:
-    src: /dev/ttyUSB3
-    dest: /dev/ttyUSB-UC20-Modem
-    state: link
-    force: true
-  when: is_physical_mode
-
-- name: Set UC20 modem device ownership
-  ansible.builtin.file:
-    path: "{{ item }}"
-    owner: root
-    group: dialout
-  loop:
-    - /dev/ttyUSB2
-    - /dev/ttyUSB3
   when: is_physical_mode
 
 - name: Detect modem alias devices for Docker

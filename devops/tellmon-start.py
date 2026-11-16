@@ -46,13 +46,7 @@ def prepare_devices(model):
             os.mknod(ppp, stat.S_IFCHR | 0o600, os.makedev(108, 0))
         ppp.chmod(0o666)
 
-    for alias, target in {
-        "/dev/ttyUSB-UC20-AT": "/dev/ttyUSB2",
-        "/dev/ttyUSB-UC20-Modem": "/dev/ttyUSB3",
-    }.items():
-        if alias in devices and not os.path.lexists(alias):
-            os.symlink(target, alias)
-
+    # Stable modem aliases are created by the installed udev rules.
     for device in sorted(devices):
         wait_for(lambda: Path(device).is_char_device(), device)
 
