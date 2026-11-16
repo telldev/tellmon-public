@@ -4,6 +4,7 @@
     resolved_ports_file: "{{ ports_file | default(portsfile | default(ports_path | default(PORTS_FILE | default('')))) }}"
     resolved_compose_dir: "{{ compose_dir | default('/docker/tellmon') }}"
     resolved_compose_file: "{{ compose_file | default((compose_dir | default('/docker/tellmon')) ~ '/docker-compose.yml') }}"
+    resolved_caddyfile: "{{ caddyfile | default((compose_dir | default('/docker/tellmon')) ~ '/config/caddy/Caddyfile') }}"
     resolved_sshd_config: "{{ sshd_config_file | default('/etc/ssh/sshd_config') }}"
 
 - name: Validate ports file parameter is provided
@@ -55,35 +56,36 @@
       - parsed_ports.ssh_port | int <= 65535
     fail_msg: "ssh_port must be an integer between 1 and 65535"
 
-- name: Update Caddy web port in docker-compose.yml
-  ansible.builtin.replace:
-    path: "{{ resolved_compose_file }}"
-    regexp: '-\s*[0-9]+:8443\b'
-    replace: "- {{ parsed_ports.web_port | default('8443') }}:8443"
+- name: Update Caddy global HTTPS port
+  ansible.builtin.lineinfile:
+    path: "{{ resolved_caddyfile }}"
+    regexp: '^\s*https_port\s+[0-9]+\s*$'
+    line: "  https_port {{ parsed_ports.web_port | default('8443') }}"
   when:
     - (parsed_ports.web_port | default('8443') | string | length) > 0
-  register: caddy_replace
+  register: caddy_https_port
 
-- name: Update Receiver external ports in docker-compose.yml
-  ansible.builtin.replace:
-    path: "{{ resolved_compose_file }}"
-    regexp: '-\s*[0-9]+:{{ item.internal }}\b'
-    replace: "- {{ item.external }}:{{ item.internal }}"
-  loop:
-    - { internal: '3535', external: "{{ parsed_ports.tellmon_tcp_port | default('3535') }}" }
-    - { internal: '3333', external: "{{ parsed_ports.tex_port | default('3333') }}" }
-    - { internal: '3545', external: "{{ parsed_ports.tellmon_udp_port | default('3545') }}" }
-    - { internal: '3000', external: "{{ parsed_ports.sia_tcp_port | default('3000') }}" }
-    - { internal: '3001', external: "{{ parsed_ports.sia_udp_port | default('3001') }}" }
-  when: (item.external | string | length) > 0
-  register: receiver_replaces
+- name: Update Caddy HTTPS listener address
+  ansible.builtin.lineinfile:
+    path: "{{ resolved_caddyfile }}"
+    regexp: '^:[0-9]+\s*\{$'
+    line: ":{{ parsed_ports.web_port | default('8443') }} {"
+  when:
+    - (parsed_ports.web_port | default('8443') | string | length) > 0
+  register: caddy_listener_port
 
 - name: Determine changed services
   ansible.builtin.set_fact:
     changed_services: >-
       {{
-        (['caddy'] if (caddy_replace.changed | default(false)) else []) +
-        (['receiver'] if (receiver_replaces.results | default([]) | selectattr('changed', 'defined') | selectattr('changed') | list | length > 0) else [])
+        (['caddy'] if ((caddy_https_port.changed | default(false)) or (caddy_listener_port.changed | default(false))) else []) +
+        (['receiver'] if (
+          (parsed_ports.tellmon_tcp_port | default('') | string | length > 0) or
+          (parsed_ports.tellmon_udp_port | default('') | string | length > 0) or
+          (parsed_ports.tex_port | default('') | string | length > 0) or
+          (parsed_ports.sia_tcp_port | default('') | string | length > 0) or
+          (parsed_ports.sia_udp_port | default('') | string | length > 0)
+        ) else [])
       }}
 
 - name: Display changed services
@@ -91,22 +93,12 @@
     msg: "Services requiring restart/recreation: {{ changed_services }}"
   when: changed_services | length > 0
 
-- name: Recreate changed docker compose services
+- name: Restart changed docker compose services to apply listener settings
   when: changed_services | length > 0
-  block:
-    - name: Recreate changed services via docker_compose_v2
-      community.docker.docker_compose_v2:
-        project_src: "{{ resolved_compose_dir }}"
-        files:
-          - "{{ resolved_compose_file | basename }}"
-        services: "{{ changed_services }}"
-        state: present
-  rescue:
-    - name: "Fallback - Recreate changed services via docker compose CLI"
-      ansible.builtin.command:
-        cmd: "docker compose -f {{ resolved_compose_file }} up -d --no-deps {{ item }}"
-        chdir: "{{ resolved_compose_dir }}"
-      loop: "{{ changed_services }}"
+  ansible.builtin.command:
+    cmd: "docker compose -f {{ resolved_compose_file }} restart {{ item }}"
+    chdir: "{{ resolved_compose_dir }}"
+  loop: "{{ changed_services }}"
 
 - name: Wait for receiver to be healthy if receiver was recreated
   community.docker.docker_container_info:
@@ -116,7 +108,6 @@
   retries: 20
   delay: 10
   when: "'receiver' in changed_services"
-  ignore_errors: true
 
 - name: Check if SSH config file exists
   ansible.builtin.stat:
