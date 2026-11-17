@@ -1,9 +1,47 @@
 ---
-- name: Start Tellmon containers in dependency order
-  ansible.builtin.script:
-    cmd: >-
-      {{ (playbook_dir ~ '/../../tellmon-compose-start.py') | quote }}
-      --compose-dir /docker/tellmon
-      {{ '--pull' if (pull_compose_images | default(true) | bool) else '' }}
-    executable: /usr/bin/python3
-  changed_when: true
+# Compose owns ordering (depends_on + service_healthy), recreation and restarts.
+# Containers are recreated automatically when their image or configuration changes.
+- name: Start Tellmon containers
+  block:
+    # Pull first: a failed download leaves the running installation untouched.
+    - name: Pull updated Tellmon images
+      ansible.builtin.command:
+        argv: [docker, compose, --project-directory, /docker/tellmon, pull, --quiet]
+      changed_when: true
+      when: pull_compose_images | default(true) | bool
+
+    - name: Start containers in dependency order and wait until healthy
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --project-directory
+          - /docker/tellmon
+          - up
+          - --detach
+          - --wait
+          - --wait-timeout
+          - "{{ compose_wait_timeout | default(600) | string }}"
+      changed_when: true
+
+  rescue:
+    - name: Collect container status
+      ansible.builtin.command:
+        argv: [docker, compose, --project-directory, /docker/tellmon, ps, --all]
+      register: compose_status
+      changed_when: false
+      failed_when: false
+
+    - name: Collect recent container logs
+      ansible.builtin.command:
+        argv: [docker, compose, --project-directory, /docker/tellmon, logs, --no-color, --tail, "80"]
+      register: compose_logs
+      changed_when: false
+      failed_when: false
+
+    - name: Report Tellmon startup failure
+      ansible.builtin.fail:
+        msg: |
+          Tellmon startup failed: {{ ansible_failed_result.stderr | default(ansible_failed_result.msg | default('')) }}
+          {{ compose_status.stdout | default('') }}
+          {{ compose_logs.stdout | default('') }}

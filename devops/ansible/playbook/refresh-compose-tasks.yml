@@ -41,20 +41,8 @@
       {{ ('PHYSICAL_MODE=true' in (existing_mode_file.content | b64decode).splitlines())
          if existing_mode_stat.stat.exists else
          (installed_compose.services.receiver.environment.PHYSICAL_MODE | default('false') | bool) }}
-    serial_devices: []
   when: preserve_installed_runtime | default(false) | bool
   no_log: true
-
-- name: Preserve installed serial devices when updating
-  ansible.builtin.set_fact:
-    serial_devices: "{{ (serial_devices + [device_path]) | unique | list }}"
-  vars:
-    device_path: "{{ item.path_on_host if item is mapping else (item.split(':') | first) }}"
-  loop: "{{ (installed_compose.services.receiver.devices | default([])) + (installed_compose.services.backend.devices | default([])) }}"
-  when:
-    - preserve_installed_runtime | default(false) | bool
-    - is_physical_mode
-    - device_path != '/dev/ppp'
 
 - name: Render current Compose template
   ansible.builtin.set_fact:

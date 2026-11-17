@@ -1,4 +1,9 @@
 # Canonical deployment Compose file; rendered by refresh-compose-tasks.yml.
+# Compose is the only startup mechanism: `docker compose up --wait` orders the
+# services by depends_on/healthchecks, and Docker restores them at boot through
+# restart: unless-stopped. ./run holds the host listener's reboot.sock; it is
+# mounted as a directory so a recreated socket is visible without recreating
+# the containers.
 services:
   caddy:
     image: tellsoftware/tellmon-caddy:latest
@@ -65,15 +70,14 @@ services:
       SPRING_PROFILES_ACTIVE: docker
       PHYSICAL_MODE: "{{ 'true' if is_physical_mode else 'false' }}"
 {% if is_physical_mode %}
+    # Devices are reached through the /dev mount below rather than `devices:`,
+    # so a modem that appears late at boot never prevents the container from
+    # starting. Allowed: ttyS (4), ppp (108), ttyACM (166), ttyUSB (188).
     device_cgroup_rules:
+      - 'c 4:* rwm'
       - 'c 108:0 rwm'
       - 'c 166:* rwm'
       - 'c 188:* rwm'
-    devices:
-      - /dev/ppp:/dev/ppp:rwm
-{% for serial_device in serial_devices | default([]) %}
-      - {{ serial_device }}:{{ serial_device }}:rwm
-{% endfor %}
     cap_add:
       - NET_ADMIN
 {% endif %}
@@ -86,7 +90,7 @@ services:
       - ./config:/home/tellmon/TELLMon/config
       - ./bin:/home/tellmon/TELLMon/bin
       - ./device_updates:/home/tellmon/TELLMon/device_updates
-      - ./reboot.sock:/var/run/reboot.sock
+      - ./run:/run/tellmon
       - /sys:/host/sys:ro
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f tellreceiver || exit 1"]
@@ -121,19 +125,22 @@ services:
       SPRING_PROFILES_ACTIVE: docker
       SPRING_DATASOURCE_PASSWORD: {{ postgres_password | default('secret') | to_json }}
       PHYSICAL_MODE: "{{ 'true' if is_physical_mode else 'false' }}"
-{% if serial_devices | default([]) | length > 0 %}
-    devices:
-{% for serial_device in serial_devices | default([]) %}
-      - {{ serial_device }}:{{ serial_device }}:rwm
-{% endfor %}
+{% if is_physical_mode %}
+    device_cgroup_rules:
+      - 'c 4:* rwm'
+      - 'c 166:* rwm'
+      - 'c 188:* rwm'
 {% endif %}
     group_add:
       - dialout
     volumes:
+{% if is_physical_mode %}
+      - /dev:/dev
+{% endif %}
       - ./config:/home/tellmon/TELLMon/config
       - ./bin:/home/tellmon/TELLMon/bin
       - ./device_updates:/home/tellmon/TELLMon/device_updates
-      - ./reboot.sock:/var/run/reboot.sock
+      - ./run:/run/tellmon
     healthcheck:
       test: ["CMD-SHELL", "nc -z 127.0.0.1 8889 || exit 1"]
       interval: 10s
@@ -163,7 +170,7 @@ services:
       SERVER_ADDRESS: "127.0.0.1"
     volumes:
       - /sys:/host/sys:ro
-      - ./reboot.sock:/var/run/reboot.sock
+      - ./run:/run/tellmon
       - ./config:/home/tellmon/TELLMon/config
       - ./bin:/home/tellmon/TELLMon/bin
     healthcheck:

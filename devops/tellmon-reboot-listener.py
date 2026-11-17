@@ -11,7 +11,10 @@ import tempfile
 import errno
 import sys
 
-SOCKET_PATH = "/docker/tellmon/reboot.sock"
+# Containers mount this directory (not the socket file), so a socket recreated
+# by a listener restart is visible to them without recreating the containers.
+SOCKET_DIR = "/docker/tellmon/run"
+SOCKET_PATH = os.path.join(SOCKET_DIR, "reboot.sock")
 HOST_COMMAND = "/usr/local/lib/tellmon/bin/command-host.sh"
 COPY_FILE_COMMAND = "/usr/local/lib/tellmon/bin/scripts/T02copy-file.sh"
 SOCKET_GID = int(os.environ.get("TELLMON_SOCKET_GID", "10001"))
@@ -112,7 +115,14 @@ def prepare_socket_path(path):
         os.remove(path)
 
 
+def prepare_socket_dir(path):
+    os.makedirs(path, exist_ok=True)
+    os.chown(path, 0, SOCKET_GID)
+    os.chmod(path, 0o750)
+
+
 def main():
+    prepare_socket_dir(SOCKET_DIR)
     prepare_socket_path(SOCKET_PATH)
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.bind(SOCKET_PATH)

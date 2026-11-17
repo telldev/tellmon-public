@@ -4,3 +4,5 @@ ATTRS{idVendor}=="2c7c", ATTRS{idProduct}=="0125", ENV{ID_MM_DEVICE_IGNORE}="1"
 # Match modem interfaces rather than Linux ttyUSB enumeration order.
 ACTION=="add|change", SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="05c6", ENV{ID_MODEL_ID}=="9003", ENV{ID_USB_INTERFACE_NUM}=="02", SYMLINK+="ttyUSB-UC20-AT", GROUP="dialout"
 ACTION=="add|change", SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="05c6", ENV{ID_MODEL_ID}=="9003", ENV{ID_USB_INTERFACE_NUM}=="03", SYMLINK+="ttyUSB-UC20-Modem", GROUP="dialout"
+# /dev/ppp is recreated at every boot; keep it usable by the receiver's pppd.
+KERNEL=="ppp", MODE="0666"

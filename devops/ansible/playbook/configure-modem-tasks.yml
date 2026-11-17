@@ -50,3 +50,13 @@
         name: util-linux
         state: present
 
+
+    # /dev is rebuilt on every boot; load ppp_generic early so the kernel
+    # creates /dev/ppp before Docker restores the receiver.
+    - name: Load the PPP kernel module at boot
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/tellmon-ppp.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: "ppp_generic\n"

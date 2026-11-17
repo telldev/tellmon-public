@@ -217,26 +217,12 @@
 
 - name: Wait for reboot listener socket to be ready
   ansible.builtin.wait_for:
-    path: /docker/tellmon/reboot.sock
+    path: /docker/tellmon/run/reboot.sock
     state: present
     timeout: 15
 
 - name: Configure stable modem devices before detection
   ansible.builtin.import_tasks: configure-modem-tasks.yml
-
-- name: Detect serial devices for Docker
-  ansible.builtin.shell: >
-    find /dev -maxdepth 1 -type c \( -name 'ttyS[0-9]*' -o -name 'ttyUSB[0-9]*' -o -name 'ttyACM[0-9]*' \) -print | sort -V
-  register: detected_serial_devices
-  changed_when: false
-  when: is_physical_mode
-
-- name: Detect modem alias devices for Docker
-  ansible.builtin.shell: >
-    find /dev -maxdepth 1 \( -type c -o -type l \) \( -name 'ttyUSB-UC20-*' -o -name 'ttyUSB-UC25-*' -o -name 'gsm' \) -print | sort -V
-  register: detected_modem_alias_devices
-  changed_when: false
-  when: is_physical_mode
 
 - name: Detect USB PPP modem
   ansible.builtin.shell: >
@@ -248,7 +234,6 @@
 
 - name: Store detected device facts
   ansible.builtin.set_fact:
-    serial_devices: "{{ ((detected_serial_devices.stdout_lines | default([])) + (detected_modem_alias_devices.stdout_lines | default([]))) | unique | list if is_physical_mode else [] }}"
     has_ppp_modem: "{{ is_physical_mode }}"
 
 - name: Load PPP kernel module
@@ -271,6 +256,9 @@
 - name: Refresh docker-compose file for installation
   ansible.builtin.import_tasks: refresh-compose-tasks.yml
 
+- name: Remove legacy boot-time startup service
+  ansible.builtin.import_tasks: remove-legacy-startup-tasks.yml
+
 - name: Start containers in dependency order
   ansible.builtin.import_tasks: start-compose-tasks.yml
 
@@ -279,5 +267,5 @@
     images: true
     builder_cache: true
 
-- name: Install ordered startup for subsequent boots
-  ansible.builtin.import_tasks: install-startup-tasks.yml
+- name: Install host helpers
+  ansible.builtin.import_tasks: install-host-helpers-tasks.yml
