@@ -65,11 +65,24 @@
     mode: "0755"
   register: reboot_listener_update
 
+# The unit carries boot ordering (Before=docker.service) and KillMode=process,
+# which keeps a running modem connection alive across listener restarts.
+- name: Update host reboot listener service
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../tellmon-reboot-listener.service"
+    dest: /etc/systemd/system/tellmon-reboot-listener.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: reboot_listener_unit_update
+
 - name: Restart updated host reboot listener
   ansible.builtin.systemd:
     name: tellmon-reboot-listener.service
     state: restarted
-  when: reboot_listener_update.changed
+    enabled: true
+    daemon_reload: "{{ reboot_listener_unit_update.changed }}"
+  when: reboot_listener_update.changed or reboot_listener_unit_update.changed
 
 - name: Update jwt.secret in shared application.properties
   ansible.builtin.lineinfile:
