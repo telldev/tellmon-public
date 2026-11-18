@@ -3,61 +3,62 @@
   hosts: localhost
   connection: local
   become: true
+  gather_facts: false
+  vars:
+    compose_file: /docker/tellmon/docker-compose.yml
+    digest_file: /docker/tellmon/config/image-digests.json
+    # Docker Hub references may carry these prefixes in RepoDigests.
+    hub_prefix_pattern: '^(docker\.io/)?(registry-1\.docker\.io/)?(library/)?'
   tasks:
-    - name: Inspect pulled images and save their repository digests
-      ansible.builtin.shell: |
-        python3 - <<'PY'
-        import json
-        import os
-        import subprocess
-        import tempfile
+    - name: Read deployed Compose file
+      ansible.builtin.slurp:
+        src: "{{ compose_file }}"
+      register: compose_content
+      no_log: true
 
-        compose_file = "/docker/tellmon/docker-compose.yml"
-        digest_file = "/docker/tellmon/config/image-digests.json"
+    - name: Collect the image of each service
+      ansible.builtin.set_fact:
+        service_images: >-
+          {{ dict(compose_services | dict2items | map(attribute='key')
+                  | zip(compose_services | dict2items | map(attribute='value.image'))) }}
+      vars:
+        compose_services: "{{ (compose_content.content | b64decode | from_yaml).services }}"
 
-        def repository_name(value):
-            for prefix in ("docker.io/", "registry-1.docker.io/", "library/"):
-                if value.startswith(prefix):
-                    value = value[len(prefix):]
-            return value
+    - name: Inspect installed service images
+      community.docker.docker_image_info:
+        name: "{{ item.value }}"
+      loop: "{{ service_images | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      register: image_info
 
-        compose = json.loads(subprocess.check_output(
-            ["docker", "compose", "-f", compose_file, "config", "--format", "json"],
-            text=True,
-        ))
-        images = {}
-        for service_name, service in compose["services"].items():
-            image = service["image"]
-            inspected = json.loads(subprocess.check_output(
-                ["docker", "image", "inspect", image], text=True,
-            ))[0]
-            expected = repository_name(image.rsplit(":", 1)[0])
-            digest = None
-            for value in inspected.get("RepoDigests") or []:
-                repository, separator, candidate = value.partition("@")
-                if separator and repository_name(repository) == expected:
-                    digest = candidate
-                    break
-            if (digest is None or not digest.startswith("sha256:")
-                    or len(digest) != 71
-                    or any(character not in "0123456789abcdefABCDEF" for character in digest[7:])):
-                raise RuntimeError(f"No matching repository digest for {image}")
-            images[service_name] = {"image": image, "digest": digest}
+    - name: Select the repository digest of each service image
+      ansible.builtin.set_fact:
+        image_digests: >-
+          {{ image_digests | default({}) | combine({item.item.key: {
+               'image': item.item.value,
+               'digest': ((item.images | default([]) | first | default({})).RepoDigests | default([]))
+                         | select('match', digest_pattern)
+                         | map('regex_replace', '^.*@', '')
+                         | first | default('')
+             }}) }}
+      vars:
+        repository: "{{ item.item.value | regex_replace(':[^:/]*$', '') | regex_replace(hub_prefix_pattern, '') }}"
+        digest_pattern: "{{ hub_prefix_pattern ~ (repository | regex_escape) ~ '@sha256:[0-9a-fA-F]{64}$' }}"
+      loop: "{{ image_info.results }}"
+      loop_control:
+        label: "{{ item.item.key }}"
 
-        fd, temporary = tempfile.mkstemp(
-            prefix=".image-digests.", dir=os.path.dirname(digest_file)
-        )
-        try:
-            with os.fdopen(fd, "w") as stream:
-                json.dump(images, stream, indent=2, sort_keys=True)
-                stream.write("\n")
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.chmod(temporary, 0o644)
-            os.replace(temporary, digest_file)
-        finally:
-            if os.path.exists(temporary):
-                os.unlink(temporary)
-        PY
-      args:
-        executable: /bin/bash
+    - name: Ensure every service image has a repository digest
+      ansible.builtin.assert:
+        that: missing_digests | length == 0
+        fail_msg: "No matching repository digest for {{ missing_digests | join(', ') }}"
+      vars:
+        missing_digests: >-
+          {{ image_digests | dict2items | rejectattr('value.digest') | map(attribute='value.image') | list }}
+
+    - name: Save repository digests
+      ansible.builtin.copy:
+        dest: "{{ digest_file }}"
+        content: "{{ image_digests | to_nice_json(indent=2, sort_keys=true) }}\n"
+        mode: "0644"

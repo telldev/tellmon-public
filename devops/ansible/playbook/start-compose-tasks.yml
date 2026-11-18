@@ -5,33 +5,45 @@
   block:
     # Pull first: a failed download leaves the running installation untouched.
     - name: Pull updated Tellmon images
-      ansible.builtin.command:
-        argv: [docker, compose, --project-directory, /docker/tellmon, pull, --quiet]
-      changed_when: true
+      community.docker.docker_compose_v2_pull:
+        project_src: /docker/tellmon
       when: pull_compose_images | default(true) | bool
 
-    - name: Start containers in dependency order and wait until healthy
-      ansible.builtin.command:
-        argv:
-          - docker
-          - compose
-          - --project-directory
-          - /docker/tellmon
-          - up
-          - --detach
-          - --wait
-          - --wait-timeout
-          - "{{ compose_wait_timeout | default(600) | string }}"
-      changed_when: true
+    # Compose still starts dependents only after their depends_on conditions
+    # (service_healthy) are met. The module's `wait` option needs
+    # community.docker >= 3.8.0, which distribution Ansible packages may not
+    # ship, so readiness of the started containers is checked below.
+    - name: Start containers in dependency order
+      community.docker.docker_compose_v2:
+        project_src: /docker/tellmon
+        state: present
+      register: compose_up
+
+    - name: Wait until containers are healthy
+      community.docker.docker_container_info:
+        name: "{{ item.Name }}"
+      register: started_container
+      until: >-
+        started_container.exists
+        and started_container.container.State.Running
+        and (started_container.container.State.Health.Status | default('healthy')) == 'healthy'
+      retries: "{{ ((compose_wait_timeout | default(600) | int) / 5) | round(0, 'ceil') | int }}"
+      delay: 5
+      loop: "{{ compose_up.containers | default([]) }}"
+      loop_control:
+        label: "{{ item.Name }}"
 
   rescue:
     - name: Collect container status
-      ansible.builtin.command:
-        argv: [docker, compose, --project-directory, /docker/tellmon, ps, --all]
+      community.docker.docker_host_info:
+        containers: true
+        containers_all: true
+        containers_filters:
+          label: com.docker.compose.project=tellmon
       register: compose_status
-      changed_when: false
       failed_when: false
 
+    # community.docker has no module that reads container logs.
     - name: Collect recent container logs
       ansible.builtin.command:
         argv: [docker, compose, --project-directory, /docker/tellmon, logs, --no-color, --tail, "80"]
@@ -43,5 +55,7 @@
       ansible.builtin.fail:
         msg: |
           Tellmon startup failed: {{ ansible_failed_result.stderr | default(ansible_failed_result.msg | default('')) }}
-          {{ compose_status.stdout | default('') }}
+          {% for container in compose_status.containers | default([]) %}
+          {{ container.Names | default([]) | join(',') }}: {{ container.Status | default('') }}
+          {% endfor %}
           {{ compose_logs.stdout | default('') }}

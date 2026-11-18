@@ -95,10 +95,11 @@
 
 - name: Restart changed docker compose services to apply listener settings
   when: changed_services | length > 0
-  ansible.builtin.command:
-    cmd: "docker compose -f {{ resolved_compose_file }} restart {{ item }}"
-    chdir: "{{ resolved_compose_dir }}"
-  loop: "{{ changed_services }}"
+  community.docker.docker_compose_v2:
+    # `files` needs community.docker >= 3.7.0; the project directory holds docker-compose.yml.
+    project_src: "{{ resolved_compose_file | dirname }}"
+    state: restarted
+    services: "{{ changed_services }}"
 
 - name: Wait for receiver to be healthy if receiver was recreated
   community.docker.docker_container_info:

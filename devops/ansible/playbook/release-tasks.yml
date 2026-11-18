@@ -256,9 +256,6 @@
 - name: Refresh docker-compose file for installation
   ansible.builtin.import_tasks: refresh-compose-tasks.yml
 
-- name: Remove legacy boot-time startup service
-  ansible.builtin.import_tasks: remove-legacy-startup-tasks.yml
-
 - name: Start containers in dependency order
   ansible.builtin.import_tasks: start-compose-tasks.yml
 
