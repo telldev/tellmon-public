@@ -1,0 +1,39 @@
+---
+- name: Ensure root-owned Tellmon helper directory exists
+  ansible.builtin.file:
+    path: /usr/local/lib/tellmon/bin
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Manager seeds the shared bin directory from its image before this task runs.
+# command.sh in that directory is the container socket wrapper; the host must
+# use command-host.sh to execute modem commands rather than call its own socket.
+- name: Install host command helper from the deployed manager image
+  ansible.builtin.copy:
+    src: /docker/tellmon/bin/command-host.sh
+    dest: /usr/local/lib/tellmon/bin/command-host.sh
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install host modem helpers from the deployed manager image
+  ansible.builtin.copy:
+    src: "/docker/tellmon/bin/{{ item }}"
+    dest: "/usr/local/lib/tellmon/bin/{{ item }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+  when: is_physical_mode | bool
+  loop:
+    - wvdial_3g.sh
+    - internal_3g.sh
+
+# Docker restores the containers at boot through their restart policy.
+- name: Enable Docker at boot
+  ansible.builtin.systemd:
+    name: docker.service
+    enabled: true

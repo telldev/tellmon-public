@@ -1,0 +1,32 @@
+---
+# Older releases started Compose from tellmon.service at boot. Docker's restart
+# policy now restores the stack, so remove that unit before starting Compose.
+# Stopping it runs its ExecStop (compose stop); the following start task brings
+# the containers back with `up`, which also clears their "manually stopped"
+# state so restart: unless-stopped restores them at the next boot.
+- name: Check for the legacy Tellmon startup service
+  ansible.builtin.stat:
+    path: /etc/systemd/system/tellmon.service
+  register: legacy_tellmon_service
+
+- name: Stop and disable the legacy Tellmon startup service
+  ansible.builtin.systemd:
+    name: tellmon.service
+    state: stopped
+    enabled: false
+  when: legacy_tellmon_service.stat.exists
+
+- name: Remove legacy Tellmon startup files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/tellmon.service
+    - /usr/local/bin/tellmon-start.py
+    - /usr/local/bin/tellmon-compose-start.py
+  register: legacy_tellmon_files
+
+- name: Reload systemd after removing the legacy startup service
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: legacy_tellmon_files.changed

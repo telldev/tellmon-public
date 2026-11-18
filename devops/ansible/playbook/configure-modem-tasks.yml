@@ -1,0 +1,62 @@
+---
+- name: Configure physical modem support
+  when: is_physical_mode | bool
+  block:
+    - name: Reserve Tellmon USB modems for receiver and wvdial
+      ansible.builtin.copy:
+        dest: /etc/udev/rules.d/99-tellmon-modem.rules
+        owner: root
+        group: root
+        mode: "0644"
+        src: "{{ playbook_dir }}/../../tellmon-modem.rules"
+      register: tellmon_modem_rules
+
+    - name: Reload Tellmon modem rules
+      ansible.builtin.command: udevadm control --reload-rules
+      when: tellmon_modem_rules.changed
+
+    - name: Apply modem rules to connected USB devices and serial ports
+      ansible.builtin.command:
+        argv:
+          - udevadm
+          - trigger
+          - --action=change
+          - --subsystem-match=usb
+          - --subsystem-match=tty
+      when: tellmon_modem_rules.changed
+
+    - name: Wait for modem rule processing
+      ansible.builtin.command: udevadm settle
+      changed_when: false
+      when: tellmon_modem_rules.changed
+
+    - name: Check whether ModemManager is running
+      ansible.builtin.command: systemctl is-active --quiet ModemManager.service
+      register: tellmon_modem_manager_active
+      changed_when: false
+      failed_when: false
+      when: tellmon_modem_rules.changed
+
+    - name: Release Tellmon modem ports from ModemManager
+      ansible.builtin.systemd:
+        name: ModemManager.service
+        state: restarted
+      when:
+        - tellmon_modem_rules.changed
+        - tellmon_modem_manager_active.rc | default(1) == 0
+
+    - name: Ensure modem supervisor locking is available
+      ansible.builtin.package:
+        name: util-linux
+        state: present
+
+
+    # /dev is rebuilt on every boot; load ppp_generic early so the kernel
+    # creates /dev/ppp before Docker restores the receiver.
+    - name: Load the PPP kernel module at boot
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/tellmon-ppp.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: "ppp_generic\n"
