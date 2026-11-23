@@ -47,6 +47,33 @@ services:
       timeout: 5s
       retries: 5
 
+  mqtt:
+    container_name: tellmon_mqtt
+    restart: unless-stopped
+    image: eclipse-mosquitto:2.0.20
+    # Start order: manager -> mqtt -> receiver.
+    depends_on:
+      manager:
+        condition: service_healthy
+    logging:
+      options:
+        max-size: "50m"
+        max-file: "5"
+    ports:
+      # Receiver (host network) uses plaintext on loopback: localhost:1883.
+      - 127.0.0.1:1883:1884
+      # External clients: TLS once the MQTT certificate is generated.
+      - 8883:1883
+    volumes:
+      - ./config/mqtt:/mosquitto/config:ro
+      - ./config/certificate/mqtt:/mosquitto/certs:ro
+      - mqtt_data:/mosquitto/data
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -h 127.0.0.1 -p 1884 -t '$$SYS/broker/uptime' -C 1 -W 3 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   receiver:
     container_name: tellmon_receiver
     restart: unless-stopped
@@ -59,6 +86,8 @@ services:
       postgres:
         condition: service_healthy
       manager:
+        condition: service_healthy
+      mqtt:
         condition: service_healthy
     # Use host interfaces, including dynamically created PPP interfaces.
     network_mode: host
@@ -184,3 +213,4 @@ volumes:
   tellmon_db_data:
   caddy_data:
   caddy_config:
+  mqtt_data:
