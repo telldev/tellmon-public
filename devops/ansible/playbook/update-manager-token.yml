@@ -1,0 +1,7 @@
+---
+- name: Update Tellmon Manager token
+  hosts: all
+  become: true
+  tasks:
+    - name: Import update Manager token tasks
+      ansible.builtin.import_tasks: update-manager-token-tasks.yml

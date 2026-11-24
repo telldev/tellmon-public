@@ -1,0 +1,18 @@
+[Unit]
+Description=Tellmon Host Reboot Listener
+After=network.target
+# Containers send START_MODEM as soon as Docker restores them at boot; have
+# the socket ready before Docker starts.
+Before=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/bin/tellmon-reboot-listener.py
+# START_MODEM launches the long-running wvdial/internal_3g supervisor from this
+# service. Restarting the listener (install/update) must not kill the modem.
+KillMode=process
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
