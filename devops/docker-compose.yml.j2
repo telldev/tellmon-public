@@ -69,7 +69,9 @@ services:
       - ./config/certificate/mqtt:/mosquitto/certs:ro
       - mqtt_data:/mosquitto/data
     healthcheck:
-      test: ["CMD-SHELL", "mosquitto_sub -h 127.0.0.1 -p 1884 -t '$$SYS/broker/uptime' -C 1 -W 3 || exit 1"]
+      # Works with and without authentication: a "not authorised" CONNACK still
+      # proves the broker is up and speaking MQTT.
+      test: ["CMD-SHELL", "out=$$(mosquitto_sub -h 127.0.0.1 -p 1884 -t '$$SYS/broker/uptime' -C 1 -W 3 2>&1) || echo \"$$out\" | grep -q 'not authorised'"]
       interval: 10s
       timeout: 5s
       retries: 5
