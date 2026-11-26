@@ -21,13 +21,29 @@
     postgres_password: "{{ installed_compose.services.postgres.environment.POSTGRES_PASSWORD | default(postgres_password | default('secret')) }}"
   no_log: true
 
-- name: Check installed runtime mode
+- name: Check installed application properties
+  ansible.builtin.stat:
+    path: /docker/tellmon/config/application.properties
+  register: existing_properties_stat
+  when: preserve_installed_runtime | default(false) | bool
+
+- name: Read installed runtime mode from application properties
+  ansible.builtin.slurp:
+    src: /docker/tellmon/config/application.properties
+  register: existing_properties_file
+  when:
+    - preserve_installed_runtime | default(false) | bool
+    - existing_properties_stat.stat.exists
+  no_log: true
+
+# Installations from before tellmon.physical kept the mode in config/mode.
+- name: Check legacy runtime mode file
   ansible.builtin.stat:
     path: /docker/tellmon/config/mode
   register: existing_mode_stat
   when: preserve_installed_runtime | default(false) | bool
 
-- name: Read installed runtime mode
+- name: Read legacy runtime mode file
   ansible.builtin.slurp:
     src: /docker/tellmon/config/mode
   register: existing_mode_file
@@ -35,12 +51,26 @@
     - preserve_installed_runtime | default(false) | bool
     - existing_mode_stat.stat.exists
 
+- name: Find tellmon.physical in installed application properties
+  ansible.builtin.set_fact:
+    installed_physical_values: >-
+      {{ ((existing_properties_file.content | b64decode)
+          | regex_findall('(?m)^[ \t]*tellmon\.physical[ \t]*[=:][ \t]*(\S*)[ \t]*$'))
+         if (existing_properties_stat.stat.exists | default(false)) else [] }}
+  when: preserve_installed_runtime | default(false) | bool
+  no_log: true
+
+# Precedence: tellmon.physical, then the legacy mode file, then the installed
+# compose file (manager, or receiver in older files).
 - name: Preserve runtime mode when updating
   ansible.builtin.set_fact:
     is_physical_mode: >-
-      {{ ('PHYSICAL_MODE=true' in (existing_mode_file.content | b64decode).splitlines())
-         if existing_mode_stat.stat.exists else
-         (installed_compose.services.receiver.environment.PHYSICAL_MODE | default('false') | bool) }}
+      {{ (installed_physical_values | last | bool)
+         if (installed_physical_values | length > 0) else
+         (('PHYSICAL_MODE=true' in (existing_mode_file.content | b64decode).splitlines())
+          if (existing_mode_stat.stat.exists | default(false)) else
+          ((installed_compose.services.manager.environment.PHYSICAL_MODE
+            | default(installed_compose.services.receiver.environment.PHYSICAL_MODE | default('false'))) | bool)) }}
   when: preserve_installed_runtime | default(false) | bool
   no_log: true
 

@@ -8,12 +8,31 @@
     mode: "0755"
 
 # Manager seeds the shared bin directory from its image before this task runs.
-# command.sh in that directory is the container socket wrapper; the host must
-# use command-host.sh to execute modem commands rather than call its own socket.
+# command.sh in that directory is the container socket forwarder; the host
+# script is published next to it as host/command.sh.
 - name: Install host command helper from the deployed manager image
   ansible.builtin.copy:
-    src: /docker/tellmon/bin/command-host.sh
-    dest: /usr/local/lib/tellmon/bin/command-host.sh
+    src: /docker/tellmon/bin/host/command.sh
+    dest: /usr/local/lib/tellmon/bin/command.sh
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Ensure root-owned Tellmon helper scripts directory exists
+  ansible.builtin.file:
+    path: /usr/local/lib/tellmon/bin/scripts
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# The host listener runs it for the backend (SYSTEM_INFO), so the system
+# information shows the host's memory, processes, users and disk.
+- name: Install host system information script from the deployed manager image
+  ansible.builtin.copy:
+    src: /docker/tellmon/bin/scripts/T02system-info.sh
+    dest: /usr/local/lib/tellmon/bin/scripts/T02system-info.sh
     remote_src: true
     owner: root
     group: root

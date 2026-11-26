@@ -101,7 +101,6 @@ services:
     environment:
       MANAGER_URL: "http://127.0.0.1:8890"
       SPRING_PROFILES_ACTIVE: docker
-      PHYSICAL_MODE: "{{ 'true' if is_physical_mode else 'false' }}"
 {% if is_physical_mode %}
     # Devices are reached through the /dev mount below rather than `devices:`,
     # so a modem that appears late at boot never prevents the container from
@@ -157,7 +156,6 @@ services:
       SERVER_ADDRESS: "127.0.0.1"
       SPRING_PROFILES_ACTIVE: docker
       SPRING_DATASOURCE_PASSWORD: {{ postgres_password | default('secret') | to_json }}
-      PHYSICAL_MODE: "{{ 'true' if is_physical_mode else 'false' }}"
 {% if is_physical_mode %}
     device_cgroup_rules:
       - 'c 4:* rwm'
@@ -200,6 +198,9 @@ services:
       SPRING_DATASOURCE_USERNAME: root
       SPRING_DATASOURCE_PASSWORD: {{ postgres_password | default('secret') | to_json }}
       MANAGER_PORT: "8890"
+      # The manager entrypoint records this as tellmon.physical in the shared
+      # application.properties, which the receiver, backend and host scripts read.
+      PHYSICAL_MODE: "{{ 'true' if is_physical_mode else 'false' }}"
       SERVER_ADDRESS: "127.0.0.1"
     volumes:
       - /sys:/host/sys:ro

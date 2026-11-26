@@ -17,6 +17,9 @@
 - name: Ensure MQTT broker configuration before updating containers
   ansible.builtin.import_tasks: ensure-mqtt-config-tasks.yml
 
+- name: Ensure backend-writable host directories before updating containers
+  ansible.builtin.import_tasks: ensure-backend-dirs-tasks.yml
+
 - name: Refresh docker-compose file before updating containers
   ansible.builtin.import_tasks: refresh-compose-tasks.yml
   vars:
@@ -50,14 +53,20 @@
   when: not (is_physical_mode | bool)
   ignore_errors: true
 
+# Must run after the bulk copy above: on the device the shared bin directory's
+# command.sh is the container forwarder, which this replaces with the host
+# script. Not ignored, so a failed copy cannot leave the forwarder in place.
+# A device still on an older manager image has no host/command.sh yet (that
+# image published the host script as command-host.sh), so fall back to it;
+# install-host-helpers-tasks.yml installs host/command.sh once the new
+# manager has started.
 - name: Update root-owned host command helper
   ansible.builtin.copy:
-    src: "{{ tellmon_helper_bin_src }}/command-host.sh"
-    dest: "/usr/local/lib/tellmon/bin/command-host.sh"
+    src: "{{ lookup('ansible.builtin.first_found', [tellmon_host_command_src, tellmon_host_command_fallback_src | default(tellmon_host_command_src)]) }}"
+    dest: "/usr/local/lib/tellmon/bin/command.sh"
     owner: root
     group: root
     mode: "0755"
-  ignore_errors: true
 
 - name: Update host reboot listener
   ansible.builtin.copy:

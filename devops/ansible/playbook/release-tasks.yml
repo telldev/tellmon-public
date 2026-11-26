@@ -108,8 +108,9 @@
   ansible.builtin.file:
     path: "/docker/tellmon/config/caddy"
     state: directory
-    owner: root
-    group: root
+    # The backend installs the Caddyfile from the web UI HTTPS settings.
+    owner: "10001"
+    group: "10001"
     mode: "0755"
 
 - name: Install default Caddyfile if absent
@@ -156,14 +157,6 @@
 - name: Install default MQTT broker configuration
   ansible.builtin.import_tasks: ensure-mqtt-config-tasks.yml
 
-- name: Write Tellmon runtime mode
-  ansible.builtin.copy:
-    dest: "/docker/tellmon/config/mode"
-    content: "PHYSICAL_MODE={{ 'true' if is_physical_mode else 'false' }}\n"
-    owner: "10001"
-    group: "10001"
-    mode: "0644"
-
 - name: Ensure Tellmon bin directory exists on host
   ansible.builtin.file:
     path: "/docker/tellmon/bin"
@@ -180,6 +173,9 @@
     owner: "10001"
     group: "10001"
     mode: u=rwX,g=rX,o=rX
+
+- name: Ensure backend-writable host directories
+  ansible.builtin.import_tasks: ensure-backend-dirs-tasks.yml
 
 - name: Ensure Tellmon device_updates directory exists on host
   ansible.builtin.file:

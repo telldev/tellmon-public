@@ -5,6 +5,11 @@
   become: true
   vars:
     tellmon_helper_bin_src: "/docker/tellmon/bin"
+    # command.sh here is the container forwarder; the manager image publishes
+    # the host script as host/command.sh.
+    tellmon_host_command_src: "/docker/tellmon/bin/host/command.sh"
+    # Older manager images published the host script as command-host.sh.
+    tellmon_host_command_fallback_src: "/docker/tellmon/bin/command-host.sh"
   tasks:
     - name: Import update Tellmon tasks
       ansible.builtin.import_tasks: update-tellmon-tasks.yml

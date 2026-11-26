@@ -4,6 +4,7 @@
   become: true
   vars:
     tellmon_helper_bin_src: "{{ playbook_dir }}/../../../tellmon-update/bin"
+    tellmon_host_command_src: "{{ playbook_dir }}/../../../tellmon-update/bin/command.sh"
   tasks:
     - name: Import update Tellmon tasks
       ansible.builtin.import_tasks: update-tellmon-tasks.yml

@@ -1,0 +1,16 @@
+---
+# Runs on install and update: host directories the backend (uid 10001) writes.
+
+# The HTTPS settings on the web UI install the certificate and the Caddyfile
+# like tellmon-config does: both are swapped in by rename, which needs write
+# access to these directories (not to the files, which tellmon-config may own).
+- name: Ensure the backend can install HTTPS certificates
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "10001"
+    group: "10001"
+    mode: "0755"
+  loop:
+    - /docker/tellmon/config/caddy
+    - /docker/tellmon/config/certificate

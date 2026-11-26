@@ -50,6 +50,53 @@
         name: util-linux
         state: present
 
+    # The internal modem's gsm daemon (internal_3g.sh) dials with
+    # "pppd call ppps", which reads /etc/ppp/peers/ppps and its chat script.
+    - name: Ensure pppd and chat are available
+      ansible.builtin.package:
+        name: ppp
+        state: present
+
+    - name: Create the PPP peer and chat directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - /etc/ppp/peers
+        - /etc/ppp/chat
+
+    - name: Install the internal modem PPP peer
+      ansible.builtin.copy:
+        dest: /etc/ppp/peers/ppps
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          /dev/gsm/pppch
+          115200
+          connect 'chat -f /etc/ppp/chat/ppps'
+          defaultroute
+          nocrtscts
+          lock
+          noauth
+          usepeerdns
+
+    - name: Install the internal modem PPP chat script
+      ansible.builtin.copy:
+        dest: /etc/ppp/chat/ppps
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          ABORT   'BUSY'
+          ABORT   'NO CARRIER'
+          ABORT   'ERROR'
+          ''      AT
+          OK      ATD*99#
+
 
     # /dev is rebuilt on every boot; load ppp_generic early so the kernel
     # creates /dev/ppp before Docker restores the receiver.
