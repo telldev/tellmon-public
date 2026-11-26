@@ -47,6 +47,35 @@ services:
       timeout: 5s
       retries: 5
 
+  mqtt:
+    container_name: tellmon_mqtt
+    restart: unless-stopped
+    image: eclipse-mosquitto:2.0.20
+    # Start order: manager -> mqtt -> receiver.
+    depends_on:
+      manager:
+        condition: service_healthy
+    logging:
+      options:
+        max-size: "50m"
+        max-file: "5"
+    ports:
+      # Receiver (host network) uses plaintext on loopback: localhost:1883.
+      - 127.0.0.1:1883:1884
+      # External clients: TLS once the MQTT certificate is generated.
+      - 8883:1883
+    volumes:
+      - ./config/mqtt:/mosquitto/config:ro
+      - ./config/certificate/mqtt:/mosquitto/certs:ro
+      - mqtt_data:/mosquitto/data
+    healthcheck:
+      # Works with and without authentication: a "not authorised" CONNACK still
+      # proves the broker is up and speaking MQTT.
+      test: ["CMD-SHELL", "out=$$(mosquitto_sub -h 127.0.0.1 -p 1884 -t '$$SYS/broker/uptime' -C 1 -W 3 2>&1) || echo \"$$out\" | grep -q 'not authorised'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   receiver:
     container_name: tellmon_receiver
     restart: unless-stopped
@@ -60,6 +89,10 @@ services:
         condition: service_healthy
       manager:
         condition: service_healthy
+      # Only started, not healthy: a broken broker must not stop alarm
+      # reception. The receiver keeps retrying the MQTT connection itself.
+      mqtt:
+        condition: service_started
     # Use host interfaces, including dynamically created PPP interfaces.
     network_mode: host
     extra_hosts:
@@ -184,3 +217,4 @@ volumes:
   tellmon_db_data:
   caddy_data:
   caddy_config:
+  mqtt_data:

@@ -1,0 +1,7 @@
+---
+- name: Update Tellmon MQTT broker account
+  hosts: all
+  become: true
+  tasks:
+    - name: Import update MQTT account tasks
+      ansible.builtin.import_tasks: update-mqtt-account-tasks.yml

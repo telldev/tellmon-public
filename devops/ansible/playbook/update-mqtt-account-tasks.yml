@@ -1,0 +1,107 @@
+---
+# Sets the MQTT broker's only account, like "Save account" on the tellmon-config
+# MQTT screen. Keep the files and rules in sync with
+# tellmon-config/src/system/mqtt.rs (set_account, validate_account, AUTH).
+- name: Validate MQTT account variables
+  ansible.builtin.assert:
+    that:
+      - mqtt_username is defined
+      - mqtt_username is string
+      - mqtt_username | length > 0
+      - "':' not in mqtt_username"
+      - not (mqtt_username is search('[\x00-\x1f\x7f]'))
+      - mqtt_password is defined
+      - mqtt_password is string
+      - mqtt_password | length >= 8
+      - not (mqtt_password is search('[\x00-\x1f\x7f]'))
+    fail_msg: >-
+      mqtt_username must be non-empty without ':' or control characters, and
+      mqtt_password must be at least 8 characters without control characters
+  no_log: true
+
+- name: Check deployed docker-compose file
+  ansible.builtin.stat:
+    path: /docker/tellmon/docker-compose.yml
+  register: tellmon_compose_file
+
+- name: Ensure Tellmon is deployed
+  ansible.builtin.assert:
+    that:
+      - tellmon_compose_file.stat.isreg | default(false)
+    fail_msg: "Tellmon must be installed at /docker/tellmon before setting the MQTT account"
+
+- name: Ensure MQTT include directory exists on host
+  ansible.builtin.file:
+    path: /docker/tellmon/config/mqtt/conf.d
+    state: directory
+    mode: "0755"
+
+# mosquitto_passwd format: user:$7$<iterations>$<salt>$<hash> (PBKDF2-SHA512,
+# 101 iterations, 12-byte salt). The existing salt is reused when the account
+# is unchanged, so a re-run does not rewrite the file or restart the broker.
+# The password goes in on stdin, never on the command line.
+- name: Hash MQTT password
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import base64, hashlib, json, os, sys
+        account = json.load(sys.stdin)
+        user, password = account["user"], account["password"].encode()
+        def line(salt):
+            digest = hashlib.pbkdf2_hmac("sha512", password, salt, 101)
+            return "%s:$7$101$%s$%s" % (user, base64.b64encode(salt).decode(), base64.b64encode(digest).decode())
+        try:
+            with open("/docker/tellmon/config/mqtt/passwd") as f:
+                existing = f.readline().strip()
+            name, rest = existing.split(":", 1)
+            salt = base64.b64decode(rest.split("$")[3])
+            if name == user and line(salt) == existing:
+                print(existing)
+                sys.exit(0)
+        except Exception:
+            pass
+        print(line(os.urandom(12)))
+    stdin: "{{ {'user': mqtt_username, 'password': mqtt_password} | to_json }}"
+  register: mqtt_password_line
+  changed_when: false
+  no_log: true
+
+# Owned by the mosquitto user (UID/GID 1883): the broker drops root privileges.
+- name: Write MQTT password file
+  ansible.builtin.copy:
+    content: "{{ mqtt_password_line.stdout }}\n"
+    dest: /docker/tellmon/config/mqtt/passwd
+    owner: "1883"
+    group: "1883"
+    mode: "0600"
+  register: mqtt_password_file
+  no_log: true
+
+- name: Require MQTT login on all listeners
+  ansible.builtin.copy:
+    content: |
+      # Managed by tellmon-config: username/password authentication on all listeners.
+      allow_anonymous false
+      password_file /mosquitto/config/passwd
+    dest: /docker/tellmon/config/mqtt/conf.d/auth.conf
+    mode: "0644"
+  register: mqtt_auth_config
+
+- name: Restart MQTT broker to load the account
+  community.docker.docker_compose_v2:
+    project_src: /docker/tellmon
+    state: restarted
+    services:
+      - mqtt
+  when: mqtt_password_file.changed or mqtt_auth_config.changed
+
+- name: Wait for MQTT broker to be healthy
+  community.docker.docker_container_info:
+    name: tellmon_mqtt
+  register: mqtt_container_info
+  until: (mqtt_container_info.container.State.Health.Status | default('')) == 'healthy'
+  retries: 30
+  delay: 10
+  when: mqtt_password_file.changed or mqtt_auth_config.changed

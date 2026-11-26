@@ -153,6 +153,9 @@
     mode: "0644"
     force: false
 
+- name: Install default MQTT broker configuration
+  ansible.builtin.import_tasks: ensure-mqtt-config-tasks.yml
+
 - name: Write Tellmon runtime mode
   ansible.builtin.copy:
     dest: "/docker/tellmon/config/mode"

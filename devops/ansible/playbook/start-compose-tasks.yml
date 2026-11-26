@@ -9,6 +9,19 @@
         project_src: /docker/tellmon
       when: pull_compose_images | default(true) | bool
 
+    # The caddy base image declares `VOLUME /data`, and the frontend is built
+    # into /data. Compose carries anonymous volumes over when it recreates a
+    # container, so a recreated caddy would keep serving the frontend of the
+    # first installed image. Removing the container with its anonymous volumes
+    # makes `up` fill /data from the current image. The named caddy_data volume
+    # (certificates) and caddy_config are kept.
+    - name: Remove web container and its stale anonymous volumes
+      ansible.builtin.command:
+        argv: [docker, compose, --project-directory, /docker/tellmon, rm, --stop, --force, --volumes, caddy]
+      register: caddy_removed
+      changed_when: "'Removed' in caddy_removed.stderr"
+      when: pull_compose_images | default(true) | bool
+
     # Compose still starts dependents only after their depends_on conditions
     # (service_healthy) are met. The module's `wait` option needs
     # community.docker >= 3.8.0, which distribution Ansible packages may not

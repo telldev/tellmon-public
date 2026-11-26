@@ -1,0 +1,58 @@
+---
+# Runs on install and update so existing hosts get the broker configuration
+# before Compose starts the mqtt service.
+- name: Ensure MQTT config directory exists on host
+  ansible.builtin.file:
+    path: "/docker/tellmon/config/mqtt"
+    state: directory
+    mode: "0755"
+
+- name: Ensure MQTT include directory exists on host
+  ansible.builtin.file:
+    path: "/docker/tellmon/config/mqtt/conf.d"
+    state: directory
+    mode: "0755"
+
+- name: Ensure MQTT certificate directory exists on host
+  ansible.builtin.file:
+    path: "/docker/tellmon/config/certificate/mqtt"
+    state: directory
+    mode: "0755"
+
+- name: Install default Mosquitto configuration if absent
+  ansible.builtin.copy:
+    # Keep this default in sync with devops/mqtt/config/mosquitto.conf. Local installs
+    # may have only the Ansible playbooks under /home/ubuntu/ansible/playbook.
+    content: |
+      # Default Mosquitto configuration for the Tellmon MQTT broker.
+      persistence true
+      persistence_location /mosquitto/data/
+
+      # Log to stdout so Docker's log rotation applies, like the other containers.
+      log_dest stdout
+      log_timestamp_format %Y-%m-%dT%H:%M:%S
+
+      # No anonymous clients on any listener. Only the account created on the
+      # tellmon-config MQTT screen (conf.d/auth.conf + passwd) can connect; until
+      # then the broker rejects every client.
+      allow_anonymous false
+
+      # Internal plaintext listener for the receiver and the health check. Compose
+      # publishes it only on host loopback (127.0.0.1:1883 -> 1884).
+      listener 1884
+
+      # External listener: container port 1883, published on host port 8883.
+      # tellmon-config writes conf.d/tls.conf (TLS listener on 1883) when the MQTT
+      # certificate is generated; until then no external listener is open.
+      include_dir /mosquitto/config/conf.d
+    dest: "/docker/tellmon/config/mqtt/mosquitto.conf"
+    mode: "0644"
+    force: false
+
+# The task above never overwrites an existing file, so installs from before
+# this change still allow anonymous clients. Switch them off.
+- name: Disable anonymous MQTT access in an existing configuration
+  ansible.builtin.replace:
+    path: "/docker/tellmon/config/mqtt/mosquitto.conf"
+    regexp: '^allow_anonymous true$'
+    replace: 'allow_anonymous false'

@@ -14,6 +14,9 @@
 - name: Ensure Manager configuration before updating containers
   ansible.builtin.import_tasks: ensure-manager-config-tasks.yml
 
+- name: Ensure MQTT broker configuration before updating containers
+  ansible.builtin.import_tasks: ensure-mqtt-config-tasks.yml
+
 - name: Refresh docker-compose file before updating containers
   ansible.builtin.import_tasks: refresh-compose-tasks.yml
   vars:
