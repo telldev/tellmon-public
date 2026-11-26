@@ -89,8 +89,10 @@ services:
         condition: service_healthy
       manager:
         condition: service_healthy
+      # Only started, not healthy: a broken broker must not stop alarm
+      # reception. The receiver keeps retrying the MQTT connection itself.
       mqtt:
-        condition: service_healthy
+        condition: service_started
     # Use host interfaces, including dynamically created PPP interfaces.
     network_mode: host
     extra_hosts:
