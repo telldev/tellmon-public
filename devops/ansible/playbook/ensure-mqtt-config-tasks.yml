@@ -21,7 +21,8 @@
 
 - name: Install default Mosquitto configuration if absent
   ansible.builtin.copy:
-    # Keep this default in sync with devops/mqtt/config/mosquitto.conf. Local installs
+    # Keep this default in sync with devops/mqtt/config/mosquitto.conf (used by the
+    # local Compose stacks in the tellmon repository). Local installs
     # may have only the Ansible playbooks under /home/ubuntu/ansible/playbook.
     content: |
       # Default Mosquitto configuration for the Tellmon MQTT broker.

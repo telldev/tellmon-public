@@ -1,0 +1,6 @@
+# Local stacks mount this directory; never commit generated certificates,
+# keys or broker accounts (conf.d/auth.conf, passwd, tls.conf).
+certs/*
+config/conf.d/*
+config/passwd
+!.gitkeep

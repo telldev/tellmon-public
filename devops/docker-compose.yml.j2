@@ -173,7 +173,7 @@ services:
       - ./device_updates:/home/tellmon/TELLMon/device_updates
       - ./run:/run/tellmon
     healthcheck:
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 8889 || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null --post-data='' http://127.0.0.1:8889/healthcheck || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
